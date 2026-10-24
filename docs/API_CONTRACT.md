@@ -25,6 +25,8 @@ Base: `/v1`; auth: professor email OTP session; standard response `application/j
 
 Error states: `blocked_provider_billing`, `failed_provider_auth`, `rate_limited`, `failed_model`, `failed_data`, `cancelled`.
 
+평가 저장·조회 시 `CompetencyAssessment`의 `limitations`와 `requiresHumanReview`도 보존한다. DB에는 각각 `limitations_json`, `requires_human_review`로 저장하며, 교수 수정값과 별도로 AI의 검토 필요 정보를 유지한다.
+
 ## 402 — supply-side billing, not app budget
 
 ```json

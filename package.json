@@ -5,7 +5,13 @@
   "packageManager": "bun@1.3.0",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "typecheck": "echo 'Add app/package typecheck scripts after scaffolding'",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "db:generate": "bun run --cwd packages/db generate",
     "dev": "echo 'Scaffold apps/web and apps/api first'"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.3"
   }
 }

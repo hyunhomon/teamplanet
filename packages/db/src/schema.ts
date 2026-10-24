@@ -15,6 +15,13 @@ export const consents = sqliteTable("consents", {
   status: text("status").notNull(), version: text("version").notNull(),
   recordedAt: integer("recorded_at", { mode: "timestamp_ms" }).notNull(),
 }, table => [primaryKey({ columns: [table.teamId, table.studentId] })]);
+/** Written by migration triggers; consents remains the current-state snapshot. */
+export const consentHistory = sqliteTable("consent_history", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  teamId: text("team_id").notNull(), studentId: text("student_id").notNull(),
+  status: text("status").notNull(), version: text("version").notNull(),
+  recordedAt: integer("recorded_at", { mode: "timestamp_ms" }).notNull(),
+});
 export const messages = sqliteTable("messages", {
   id: text("id").primaryKey(), teamId: text("team_id").notNull(),
   slackChannelId: text("slack_channel_id").notNull(), slackTs: text("slack_ts").notNull(),
@@ -40,5 +47,7 @@ export const assessments = sqliteTable("assessments", {
   judgement: text("judgement").notNull(), narrative: text("narrative").notNull(),
   evidenceIdsJson: text("evidence_ids_json").notNull(),
   counterEvidenceIdsJson: text("counter_evidence_ids_json").notNull(),
+  limitationsJson: text("limitations_json").notNull(),
+  requiresHumanReview: integer("requires_human_review", { mode: "boolean" }).notNull(),
   confidence: text("confidence").notNull(), professorOverrideJson: text("professor_override_json"),
 });

@@ -51,16 +51,40 @@ export async function requestOpenRouter(
   apiKey: string,
   model: string,
   messages: Array<Record<string, unknown>>,
-  fetcher: typeof fetch = fetch,
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
 ) {
   const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages }), // intentionally no cost ceiling or max_tokens
   });
-  const payload: unknown = await res.json();
+  const rawBody = await res.text();
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    // Preserve HTTP failures even when a gateway returns HTML or an empty body.
+    const block = parseOpenRouter402(res.status, null, res.headers.get("Retry-After"));
+    if (block) return { ok: false as const, error: block };
+    return {
+      ok: false as const,
+      error: {
+        code: res.ok ? "OPENROUTER_INVALID_RESPONSE" : "OPENROUTER_REQUEST_ERROR",
+        providerStatus: res.status,
+        details: rawBody,
+      },
+    };
+  }
   const block = parseOpenRouter402(res.status, payload, res.headers.get("Retry-After"));
   if (block) return { ok: false as const, error: block };
-  if (!res.ok) return { ok: false as const, error: { code: "OPENROUTER_REQUEST_ERROR", providerStatus: res.status, details: payload } };
+  const body = typeof payload === "object" && payload !== null ? payload as Record<string, unknown> : {};
+  const failedChoice = Array.isArray(body.choices) && body.choices.some(
+    choice => typeof choice === "object" && choice !== null
+      && (choice.finish_reason === "error" || choice.error != null),
+  );
+  // OpenRouter may have already sent HTTP 200 before a provider fails.
+  if (!res.ok || body.error != null || failedChoice) {
+    return { ok: false as const, error: { code: "OPENROUTER_REQUEST_ERROR", providerStatus: res.status, details: payload } };
+  }
   return { ok: true as const, data: payload };
 }

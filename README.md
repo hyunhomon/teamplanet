@@ -26,7 +26,7 @@
 - `docs/ADR/0001-decisions.md` 의사결정 로그
 - `packages/contracts/` 공유 타입·JSON 계약
 - `packages/ai-core/` OpenRouter 402 에러 분류 유틸·기본 계약
-- `packages/db/` Drizzle D1 초기 스키마 초안
+- `packages/db/` Drizzle D1 초기 스키마·마이그레이션
 - `prompts/` 모델 역할별 프롬프트 초안
 
 ## 시작
@@ -35,6 +35,12 @@
 2. 문서의 평가 역량명과 Slack 앱의 실제 OAuth scope를 운영 조건에 맞게 확정합니다.
 3. `bun install` 후 각 앱(`apps/web`, `apps/api`)은 직접 스캐폴딩합니다.
 4. `packages/*` 코드는 **참조 구현**이며, 바로 실행되는 서비스라고 간주하지 않습니다.
+
+## 개발 검증
+
+`bun install --frozen-lockfile` 후 `bun run typecheck`와 `bun test`로 공통 패키지를 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
+
+DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 초기 D1 구성 시 `packages/db/migrations/`의 SQL을 순서대로 적용해야 하며, `0001_consent_audit.sql`의 트리거도 포함해야 합니다. `drizzle-kit push`만으로는 동의 이력 트리거가 설치되지 않습니다. Cloudflare 바인딩 및 배포 설정은 앱 스캐폴딩 단계에서 구성합니다.
 
 ## 정책
 
