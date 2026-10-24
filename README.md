@@ -2,7 +2,7 @@
 
 팀 프로젝트의 **지정된 Slack 채널 내 전체 대화**를 수동 기록 없이 수집하여, 교수에게 **4개 커뮤니케이션 역량별 정성 평가와 원문 근거**를 제공하는 평가 지원 도구입니다.
 
-> 이 번들은 **문서 + 기초 계약/설정 파일**만 포함합니다. 실행 가능한 Astro/Hono 앱 스캐폴딩, 구현된 Slack OAuth, 배포물은 포함하지 않습니다.
+> Astro SSR 웹과 Hono API의 실행 가능한 초기 구조, D1 마이그레이션, GitHub Actions production CD가 구성되어 있습니다. 교수 인증·Slack OAuth·수집·AI 분석 기능은 아직 구현 전입니다.
 
 ## 합의된 MVP 경계
 
@@ -23,26 +23,36 @@
 - `docs/PRIVACY_AND_DATA.md` 범위·권한·보관·삭제
 - `docs/API_CONTRACT.md` 엔드포인트/상태/에러
 - `docs/DELIVERY_PLAN.md` 개발 순서·검증 기준
+- `docs/DEPLOYMENT.md` 로컬 실행·단일 production 배포·CD 운영
 - `docs/ADR/0001-decisions.md` 의사결정 로그
 - `packages/contracts/` 공유 타입·JSON 계약
 - `packages/ai-core/` OpenRouter 402 에러 분류 유틸·기본 계약
 - `packages/db/` Drizzle D1 초기 스키마·마이그레이션
 - `prompts/` 모델 역할별 프롬프트 초안
+- `apps/web/` Astro SSR + React + Tailwind 웹
+- `apps/api/` D1에 연결된 Hono Worker API
 
 ## 시작
 
-1. `.env.example`을 복사하여 실제 비밀 값과 **합의된 3개 OpenRouter 모델 ID**를 지정합니다.
-2. 문서의 평가 역량명과 Slack 앱의 실제 OAuth scope를 운영 조건에 맞게 확정합니다.
-3. `bun install` 후 각 앱(`apps/web`, `apps/api`)은 직접 스캐폴딩합니다.
-4. `packages/*` 코드는 **참조 구현**이며, 바로 실행되는 서비스라고 간주하지 않습니다.
+Node.js 24와 Bun 1.3.14를 사용합니다.
+
+```sh
+bun install --frozen-lockfile
+bun run db:migrate:local
+bun run dev
+```
+
+웹은 `http://127.0.0.1:4321`에서 열립니다. 기본 화면과 API 상태 확인에는 외부 서비스 비밀 값이 필요하지 않습니다. 외부 기능 구현 시 `.env.example`을 참고해 비밀 값과 합의된 3개 모델 ID를 등록합니다. 평가 역량명과 Slack OAuth scope는 운영 전에 확정해야 합니다.
+
+production 주소는 `https://teamplanet.cloby.co`이며 `main` push에서 자동 배포합니다. 상세 구성은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
 
 ## 개발 검증
 
-협업자와 코딩 에이전트는 작업 전에 [AGENTS.md](AGENTS.md)와 [협업 절차](CONTRIBUTING.md)를 읽고, 열린 이슈·마일스톤을 확인한 뒤 작업 브랜치와 PR을 사용합니다. GitHub Actions는 PR의 실제 이슈·마일스톤 연결, 타입 검사, 테스트를 검사합니다. 서버에서 병합을 강제 차단하기 위한 `main` 보호 설정은 협업 절차에 설명되어 있습니다.
+협업자와 코딩 에이전트는 작업 전에 [AGENTS.md](AGENTS.md)와 [협업 절차](CONTRIBUTING.md)를 읽고, 열린 이슈·마일스톤을 확인한 뒤 작업 브랜치와 PR을 사용합니다. GitHub Actions는 PR의 실제 이슈·마일스톤 연결, 타입 검사, 테스트와 빌드를 검사합니다. 서버에서 병합을 강제 차단하기 위한 `main` 보호 설정은 협업 절차에 설명되어 있습니다.
 
-`bun install --frozen-lockfile` 후 `bun run typecheck`와 `bun test`로 공통 패키지를 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
+`bun install --frozen-lockfile` 후 `bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 두 앱을 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
 
-DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 초기 D1 구성 시 `packages/db/migrations/`의 SQL을 순서대로 적용해야 하며, `0001_consent_audit.sql`의 트리거도 포함해야 합니다. `drizzle-kit push`만으로는 동의 이력 트리거가 설치되지 않습니다. Cloudflare 바인딩 및 배포 설정은 앱 스캐폴딩 단계에서 구성합니다.
+DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 로컬은 `bun run db:migrate:local`, production은 CD의 `bun run db:migrate`로 SQL과 동의 이력 트리거를 순서대로 적용합니다. `drizzle-kit push`만으로는 트리거가 설치되지 않습니다.
 
 ## 정책
 

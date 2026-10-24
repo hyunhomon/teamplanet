@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "teamplanet-web",
+  "account_id": "d09b11497e0618d6dceff0559855a7b2",
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  "compatibility_date": "2026-10-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": { "directory": "./dist", "binding": "ASSETS" },
+  "routes": [{ "pattern": "teamplanet.cloby.co", "custom_domain": true }],
+  "services": [{ "binding": "API", "service": "teamplanet-api" }]
+}

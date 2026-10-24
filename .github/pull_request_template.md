@@ -17,5 +17,6 @@ Closes #<issue-number>
 - [ ] 연결 이슈의 완료 조건을 충족했습니다.
 - [ ] `bun run typecheck` 통과
 - [ ] `bun test` 통과
+- [ ] `bun run build` 통과
 
 <!-- 실제 실행 결과, 재현/확인 방법, 남은 한계가 있으면 작성. -->

@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "teamplanet-api",
+  "account_id": "d09b11497e0618d6dceff0559855a7b2",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-24",
+  "workers_dev": false,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "teamplanet-production",
+      "database_id": "086fd3c2-d33b-4fc2-9a6c-91df7305c8b9",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ]
+}

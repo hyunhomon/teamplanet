@@ -2,8 +2,8 @@
 
 ```text
 Bun Workspaces
-├─ apps/web          Astro SSR + React islands + Tailwind (교수 UI) [직접 scaffold]
-├─ apps/api          Hono, Cloudflare Worker (OTP/Slack/API) [직접 scaffold]
+├─ apps/web          Astro SSR + React islands + Tailwind (교수 UI 초기 구조)
+├─ apps/api          Hono, Cloudflare Worker + D1 (API 초기 구조)
 ├─ packages/contracts   공통 API/평가 타입
 ├─ packages/ai-core     OpenRouter 어댑터의 기초 정책/에러 타입
 └─ packages/db          Drizzle + D1 schema 초안
@@ -12,6 +12,8 @@ Cloudflare D1 ← API Worker → Cloudflare Queues → Analysis Consumer Worker
                         ↕                            ↕
                     Slack API                    OpenRouter (3 models)
 ```
+
+현재 배포 구조는 `teamplanet.cloby.co → web Worker → /v1/* service binding → api Worker → D1`이다. 환경 분리 없이 production만 운영하며, API Worker는 공개 URL 없이 웹 Worker에서 호출한다. GitHub Actions가 검증 후 마이그레이션·API·웹 순서로 배포한다. 상세 운영 명령은 `DEPLOYMENT.md`를 참조한다. 아래 Queue 및 분석 consumer는 후속 기능 구현 시 추가할 설계이며 아직 생성하거나 배포하지 않았다.
 
 ## 배치/비동기
 

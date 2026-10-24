@@ -1,4 +1,4 @@
-/** Draft D1 SQLite schema. Refine migrations before use. */
+/** Initial D1 SQLite schema. Keep schema and SQL migrations in sync. */
 import { integer, sqliteTable, text, primaryKey } from "drizzle-orm/sqlite-core";
 
 export const workspaces = sqliteTable("workspaces", {

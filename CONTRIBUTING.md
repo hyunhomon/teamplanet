@@ -6,7 +6,7 @@
 
 1. 열린 이슈·마일스톤·진행 중 PR을 확인합니다. 이슈의 목표·범위·완료 조건과 담당자를 정하고, 실제 GitHub Milestone 필드에 열린 마일스톤을 지정합니다. 마일스톤은 `docs/DELIVERY_PLAN.md`의 단계에 맞춰 관리자가 준비합니다.
 2. 최신 `origin/main`에서 `codex/<issue-number>-<short-description>` 브랜치를 만듭니다. 작업 전에 이슈 번호·마일스톤·변경 범위·검증 방법을 공유합니다.
-3. 변경 후 `bun install --frozen-lockfile`, `bun run typecheck`, `bun test`를 실행합니다.
+3. 변경 후 `bun install --frozen-lockfile`, `bun run typecheck`, `bun test`, `bun run build`를 실행합니다.
 4. `main`을 대상으로 PR을 열고 템플릿을 채웁니다. PR에도 이슈와 같은 열린 마일스톤을 지정하고, 본문에 아래처럼 실제 이슈를 연결합니다. 여러 이슈를 해결하면 한 줄에 하나씩 쓰며 모두 같은 마일스톤이어야 합니다.
 
    ```text
@@ -17,12 +17,13 @@
 
 ## 최소 CI
 
-`.github/workflows/ci.yml`은 PR과 `main` push에서 Ubuntu 작업 **하나**만 실행합니다. 의존성 캐시·빌드·배포·매트릭스는 추가하지 않습니다. Bun 버전은 `package.json`의 `packageManager`를 사용합니다.
+`.github/workflows/ci.yml`은 PR과 `main` push에서 Ubuntu 작업 **하나**만 실행합니다. 의존성 캐시·매트릭스·preview 환경은 사용하지 않습니다. Node.js 24를 설치하고 Bun 버전은 `package.json`의 `packageManager`를 사용합니다.
 
 - PR이면 GitHub API로 현재 PR과 연결 이슈의 실제 상태를 확인합니다. 이슈 누락, 닫힌 이슈, 마일스톤 누락·종료·불일치는 실패합니다. PR 번호를 이슈로 쓰거나 주석·코드 예제에만 번호를 넣어 통과시킬 수 없습니다.
-- `bun install --frozen-lockfile` → `bun run typecheck` → `bun test`를 실행합니다. 테스트에는 실제 외부 모델 키나 학생 데이터가 필요하지 않습니다.
+- `bun install --frozen-lockfile` → `bun run typecheck` → `bun test` → `bun run build`를 실행합니다. 테스트에는 실제 외부 모델 키나 학생 데이터가 필요하지 않습니다.
 - PR 본문·PR 마일스톤 수정 시 다시 실행합니다. **연결 이슈의 마일스톤만 바꾼 경우**에는 Actions에서 해당 PR 실행의 `Re-run all jobs`를 선택하세요. 재실행은 최신 메타데이터를 다시 조회합니다.
-- 토큰은 저장소·이슈·PR 읽기 권한만 가지며 PR 정책 단계에만 환경변수로 전달합니다. 이전 실행은 같은 PR의 새 실행이 시작되면 취소하고, 실행 제한은 5분입니다.
+- GitHub 토큰은 저장소·이슈·PR 읽기 권한만 가지며 PR 정책 단계에만 환경변수로 전달합니다. `main` push에서는 검증 후 Cloudflare Secret을 배포 단계에만 전달하여 원격 마이그레이션·API·웹을 배포합니다. 상세 내용은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
+- 같은 PR의 이전 실행은 새 실행 때 취소합니다. production 배포는 직렬화하고 중간에 취소하지 않습니다. 실행 제한은 10분입니다.
 
 ## 관리자의 최초 설정
 

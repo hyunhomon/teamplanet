@@ -31,7 +31,8 @@
 
 ## 구현과 검증
 
-- 설치는 `bun install --frozen-lockfile`, 검증은 `bun run typecheck`와 `bun test`를 사용한다. 의존성을 바꾸면 `bun.lock`도 갱신한다.
+- Node.js 24와 저장소에 지정된 Bun 버전을 사용한다. 설치는 `bun install --frozen-lockfile`, 검증은 `bun run typecheck`, `bun test`, `bun run build`를 사용한다. 의존성을 바꾸면 `bun.lock`도 갱신한다.
+- `main` push는 production 자동 배포를 유발한다. 배포 구성 변경 전 `docs/DEPLOYMENT.md`를 읽고 production 단일 환경과 내부 API service binding을 유지한다.
 - 동작 오류 수정에는 해당 오류를 재현하는 테스트를 추가한다. 문서만 바꾸는 작업에 구현을 그대로 복제하는 테스트는 만들지 않는다.
 - DB 변경은 Drizzle 스키마와 SQL 마이그레이션을 함께 반영한다. 동의 이력 트리거를 보존한다. 평가의 근거·한계·사람 검토 필요 정보를 누락하지 않는다.
 - 동의 전 수집 금지, 지정 채널 한정, 교수 최종 평가, 공급자 402 분류를 유지한다. 앱 자체 비용 제한이나 모델 자동 폴백을 임의로 추가하지 않는다.

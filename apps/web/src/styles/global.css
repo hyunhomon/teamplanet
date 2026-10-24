@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #192f2b;
+  --color-paper: #f7f8f4;
+  --color-forest: #23634f;
+}
+
+:root { font-family: "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; color: var(--color-ink); background: var(--color-paper); }
+body { margin: 0; }
+* { box-sizing: border-box; }
+::selection { background: #c9e6d4; }
+.brand-mark { width: 31px; height: 31px; border: 2px solid currentColor; border-radius: 50%; display: inline-block; position: relative; transform: rotate(-25deg); }
+.brand-mark::after { content: ""; position: absolute; width: 42px; height: 13px; border: 2px solid currentColor; border-radius: 50%; top: 7px; left: -8px; background: var(--color-paper); }
+.service-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #52695f; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #a3a99c; }
+.status-dot.ok { background: #318362; }
+.status-dot.unavailable { background: #b96d3d; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .status-dot.loading { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+}
