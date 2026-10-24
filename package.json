@@ -2,7 +2,7 @@
   "name": "teamplanet",
   "private": true,
   "version": "0.0.0",
-  "packageManager": "bun@1.3.0",
+  "packageManager": "bun@1.3.14",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "typecheck": "tsc --noEmit",

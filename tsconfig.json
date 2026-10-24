@@ -9,5 +9,5 @@
     "types": ["bun"],
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["packages/**/*.ts"]
+  "include": ["packages/**/*.ts", ".github/scripts/**/*.ts", "tests/**/*.ts"]
 }

@@ -1,0 +1,28 @@
+name: 작업
+description: 에이전트 또는 협업자가 진행할 작업과 완료 조건
+body:
+  - type: markdown
+    attributes:
+      value: 작업 시작 전에 오른쪽 Development/Assignees/Milestone을 확인하고 담당자와 열린 마일스톤을 지정하세요.
+  - type: textarea
+    id: problem
+    attributes:
+      label: 문제 또는 목표
+      description: 누구에게 어떤 문제가 있고 어떤 동작이 필요한지 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 변경 범위
+      description: 수정할 영역과 관련 문서·의존 이슈를 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건과 검증
+      description: 리뷰어가 완료 여부를 확인할 수 있는 조건과 검증 방법을 적어주세요.
+      placeholder: "- [ ] 구체적인 완료 조건"
+    validations:
+      required: true

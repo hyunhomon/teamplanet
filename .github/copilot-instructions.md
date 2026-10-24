@@ -1,0 +1,1 @@
+Read and follow the repository-root [AGENTS.md](../AGENTS.md) before planning or editing files. Its issue/milestone checks and PR workflow are mandatory. Use it as the single source of repository rules.

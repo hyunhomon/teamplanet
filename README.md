@@ -38,6 +38,8 @@
 
 ## 개발 검증
 
+협업자와 코딩 에이전트는 작업 전에 [AGENTS.md](AGENTS.md)와 [협업 절차](CONTRIBUTING.md)를 읽고, 열린 이슈·마일스톤을 확인한 뒤 작업 브랜치와 PR을 사용합니다. GitHub Actions는 PR의 실제 이슈·마일스톤 연결, 타입 검사, 테스트를 검사합니다. 서버에서 병합을 강제 차단하기 위한 `main` 보호 설정은 협업 절차에 설명되어 있습니다.
+
 `bun install --frozen-lockfile` 후 `bun run typecheck`와 `bun test`로 공통 패키지를 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
 
 DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 초기 D1 구성 시 `packages/db/migrations/`의 SQL을 순서대로 적용해야 하며, `0001_consent_audit.sql`의 트리거도 포함해야 합니다. `drizzle-kit push`만으로는 동의 이력 트리거가 설치되지 않습니다. Cloudflare 바인딩 및 배포 설정은 앱 스캐폴딩 단계에서 구성합니다.
