@@ -1,0 +1,11 @@
+{
+  "name": "teamplanet",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "bun@1.3.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "typecheck": "echo 'Add app/package typecheck scripts after scaffolding'",
+    "dev": "echo 'Scaffold apps/web and apps/api first'"
+  }
+}

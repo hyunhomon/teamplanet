@@ -1,0 +1,1 @@
+{"name":"@teamplanet/db","version":"0.0.0","private":true,"type":"module","exports":{"./schema":"./src/schema.ts"},"dependencies":{"drizzle-orm":"^0.44.0"},"devDependencies":{"drizzle-kit":"^0.31.0"}}
