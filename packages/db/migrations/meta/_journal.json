@@ -15,6 +15,13 @@
       "when": 1792826806385,
       "tag": "0001_consent_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793003128678,
+      "tag": "0002_majestic_wolf_cub",
+      "breakpoints": true
     }
   ]
 }

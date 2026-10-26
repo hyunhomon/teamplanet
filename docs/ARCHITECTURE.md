@@ -4,9 +4,9 @@
 Bun Workspaces
 ├─ apps/web          Astro SSR + React islands + Tailwind (교수 UI 초기 구조)
 ├─ apps/api          Hono, Cloudflare Worker + D1 (API 초기 구조)
-├─ packages/contracts   공통 API/평가 타입
+├─ packages/contracts   공통 API/평가 타입, Zod 검증, 합성 fixture
 ├─ packages/ai-core     OpenRouter 어댑터의 기초 정책/에러 타입
-└─ packages/db          Drizzle + D1 schema 초안
+└─ packages/db          Drizzle + D1 소유권/매핑 schema와 SQL migrations
 
 Cloudflare D1 ← API Worker → Cloudflare Queues → Analysis Consumer Worker
                         ↕                            ↕
@@ -24,6 +24,9 @@ Cloudflare D1 ← API Worker → Cloudflare Queues → Analysis Consumer Worker
 - 같은 `run_id:stage:chunk`는 멱등 처리하여 재시도 중복을 방지한다.
 
 ## 프라이버시 아키텍처
+
+- 소유권은 `professors → courses → teams`, 학생은 수업 단위 ID로 구분한다. Slack 계정은 `(workspace_id, slack_user_id)`로 식별하고 수업별 student에 연결한다. 복합 FK로 다른 수업 학생의 팀 연결을 거부한다.
+- 단일 workspace와 팀 이름/공식 채널 중복 제약을 DB에서 적용한다. 기존 소유권 미지정 팀은 NULL course로 보존하고 교수 조회·후속 수집에서 기본 거부한다. 상세 계약과 레거시 이관 경계는 `API_CONTRACT.md`, 로컬 D1 검증은 `packages/db/README.md`를 참조한다.
 
 - Slack Bot OAuth token, OpenRouter key는 Worker secrets.
 - 원문 메시지는 최소 필요 범위로 저장/접근 제어한다.

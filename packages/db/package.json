@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "exports": { "./schema": "./src/schema.ts" },
-  "scripts": { "generate": "drizzle-kit generate" },
+  "scripts": { "generate": "drizzle-kit generate", "verify:upgrade": "bun scripts/verify-upgrade.ts" },
   "dependencies": { "drizzle-orm": "^0.44.0" },
   "devDependencies": { "drizzle-kit": "^0.31.0" }
 }

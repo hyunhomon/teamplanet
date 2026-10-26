@@ -1,15 +1,57 @@
-/** Initial D1 SQLite schema. Keep schema and SQL migrations in sync. */
-import { integer, sqliteTable, text, primaryKey } from "drizzle-orm/sqlite-core";
+/** D1 SQLite schema. Keep schema, SQL migrations and audit/reference triggers in sync. */
+import { sql } from "drizzle-orm";
+import { check, foreignKey, integer, sqliteTable, text, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const professors = sqliteTable("professors", {
+  id: text("id").primaryKey(), email: text("email").notNull().unique(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [check("professors_email_normalized", sql`${table.email} = lower(trim(${table.email}))`)]);
+export const courses = sqliteTable("courses", {
+  id: text("id").primaryKey(), professorId: text("professor_id").notNull().references(() => professors.id),
+  name: text("name").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
 
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(), slackTeamId: text("slack_team_id").notNull().unique(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-});
+}, () => [uniqueIndex("workspaces_single_pilot").on(sql`(1)`)]);
 export const teams = sqliteTable("teams", {
   id: text("id").primaryKey(), workspaceId: text("workspace_id").notNull(),
+  // Nullable only for pre-contract rows: never infer a professor for legacy data.
+  // Migration triggers require a course on new rows and validate workspace references.
+  courseId: text("course_id").references(() => courses.id),
   channelId: text("channel_id").notNull(), name: text("name").notNull(),
   collectionStatus: text("collection_status").notNull().default("inactive"),
-});
+}, table => [
+  uniqueIndex("teams_workspace_channel_unique").on(table.workspaceId, table.channelId),
+  uniqueIndex("teams_workspace_name_unique").on(table.workspaceId, table.name),
+  uniqueIndex("teams_membership_scope_unique").on(table.id, table.courseId, table.workspaceId),
+]);
+export const students = sqliteTable("students", {
+  id: text("id").primaryKey(), courseId: text("course_id").notNull().references(() => courses.id),
+  displayName: text("display_name").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [uniqueIndex("students_course_scope_unique").on(table.id, table.courseId)]);
+export const slackUsers = sqliteTable("slack_users", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id),
+  slackUserId: text("slack_user_id").notNull(),
+}, table => [primaryKey({ columns: [table.workspaceId, table.slackUserId] })]);
+export const studentSlackMappings = sqliteTable("student_slack_mappings", {
+  studentId: text("student_id").primaryKey(), courseId: text("course_id").notNull(),
+  workspaceId: text("workspace_id").notNull(), slackUserId: text("slack_user_id").notNull(),
+}, table => [
+  foreignKey({ columns: [table.studentId, table.courseId], foreignColumns: [students.id, students.courseId] }),
+  foreignKey({ columns: [table.workspaceId, table.slackUserId], foreignColumns: [slackUsers.workspaceId, slackUsers.slackUserId] }),
+  uniqueIndex("student_slack_course_user_unique").on(table.courseId, table.workspaceId, table.slackUserId),
+  uniqueIndex("student_slack_membership_scope_unique").on(table.studentId, table.courseId, table.workspaceId),
+]);
+export const teamMembers = sqliteTable("team_members", {
+  teamId: text("team_id").notNull(), studentId: text("student_id").notNull(),
+  courseId: text("course_id").notNull(), workspaceId: text("workspace_id").notNull(),
+}, table => [
+  primaryKey({ columns: [table.teamId, table.studentId] }),
+  foreignKey({ columns: [table.teamId, table.courseId, table.workspaceId], foreignColumns: [teams.id, teams.courseId, teams.workspaceId] }),
+  foreignKey({ columns: [table.studentId, table.courseId, table.workspaceId], foreignColumns: [studentSlackMappings.studentId, studentSlackMappings.courseId, studentSlackMappings.workspaceId] }),
+]);
 export const consents = sqliteTable("consents", {
   teamId: text("team_id").notNull(), studentId: text("student_id").notNull(),
   status: text("status").notNull(), version: text("version").notNull(),
