@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
-import type { D1Database } from "@cloudflare/workers-types";
-import type { ApiError } from "@teamplanet/contracts";
+import type { D1Database, Queue } from "@cloudflare/workers-types";
+import type { ApiError, QueueEnvelope } from "@teamplanet/contracts";
 
-export type Bindings = { DB: D1Database };
+export type Bindings = { DB: D1Database; WORK_QUEUE: Queue<QueueEnvelope> };
 export const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", secureHeaders());

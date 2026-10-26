@@ -46,5 +46,7 @@ jobs:
         run: bun run typecheck
       - name: Test
         run: bun test
+      - name: Verify local queue round trip
+        run: bun run queue:verify:local
       - name: Build
         run: bun run build

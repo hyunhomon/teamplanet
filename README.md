@@ -28,9 +28,12 @@
 - `packages/contracts/` 공유 타입·Zod 런타임 검증·합성 API fixture (`@teamplanet/contracts/fixtures`)
 - `packages/ai-core/` OpenRouter 402 에러 분류 유틸·기본 계약
 - `packages/db/` Drizzle D1 초기 스키마·마이그레이션
+- `packages/queue/` D1 outbox·lease·체크포인트·재시도와 DLQ 복구 기반
+- `docs/QUEUE_OPERATIONS.md` 작업 envelope·재시도 상한·DLQ 단건 복구·큐 검증
 - `prompts/` 모델 역할별 프롬프트 초안
 - `apps/web/` Astro SSR + React + Tailwind 웹
 - `apps/api/` D1에 연결된 Hono Worker API
+- `apps/consumer/` Queue/cron Worker (합성 probe, 실제 수집·분석 handler는 후속 구현)
 
 ## 시작
 
@@ -50,7 +53,9 @@ production 주소는 `https://teamplanet.cloby.co`입니다. `main` push의 **CI
 
 협업자와 코딩 에이전트는 작업 전에 [AGENTS.md](AGENTS.md)와 [협업 절차](CONTRIBUTING.md)를 읽고, 열린 이슈·마일스톤을 확인한 뒤 작업 브랜치와 PR을 사용합니다. GitHub Actions는 PR의 실제 이슈·마일스톤 연결, 타입 검사, 테스트와 빌드를 검사합니다. 서버에서 병합을 강제 차단하기 위한 `main` 보호 설정은 협업 절차에 설명되어 있습니다.
 
-`bun install --frozen-lockfile` 후 `bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 두 앱을 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
+`bun install --frozen-lockfile` 후 `bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 세 앱을 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
+
+`bun run queue:verify:local`은 실제 Consumer와 로컬 Queue/D1을 격리해 정상·중복 전달 및 DLQ 이동을 검증하며 CI에서도 실행합니다. Consumer를 포함해 세 앱의 타입·빌드를 확인합니다. 배포는 단일 production에서 큐 준비 → migration → Consumer → API → 웹 순서이며 공개 큐 테스트 엔드포인트를 추가하지 않습니다.
 
 DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 로컬은 `bun run db:migrate:local`, production은 CD의 `bun run db:migrate`로 SQL과 동의 이력 트리거를 순서대로 적용합니다. `drizzle-kit push`만으로는 트리거가 설치되지 않습니다.
 

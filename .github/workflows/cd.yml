@@ -56,9 +56,16 @@ jobs:
       - name: Build verified commit
         if: steps.candidate.outputs.deploy == 'true'
         run: bun run build
-      - name: Deploy production
+      # deploy provisions DLQ/work queue -> D1 migrations -> Consumer -> API -> web.
+      - name: Provision queues, migrate and deploy consumer/API/web
         if: steps.candidate.outputs.deploy == 'true'
         run: bun run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify production queue round trip
+        if: steps.candidate.outputs.deploy == 'true'
+        run: bun run queue:smoke:production
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

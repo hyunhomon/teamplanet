@@ -93,3 +93,35 @@ export const assessments = sqliteTable("assessments", {
   requiresHumanReview: integer("requires_human_review", { mode: "boolean" }).notNull(),
   confidence: text("confidence").notNull(), professorOverrideJson: text("professor_override_json"),
 });
+
+/** Durable outbox and execution ledger: payloads contain references, never message bodies/tokens. */
+export const queueJobs = sqliteTable("queue_jobs", {
+  jobKey: text("job_key").primaryKey(), jobJson: text("job_json").notNull(),
+  generation: integer("generation").notNull().default(0), status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0), dispatches: integer("dispatches").notNull().default(0),
+  availableAt: integer("available_at").notNull().default(0), dispatchAt: integer("dispatch_at").notNull().default(0),
+  leaseToken: text("lease_token"), leaseUntil: integer("lease_until"), errorCode: text("error_code"),
+  deadLetteredAt: integer("dead_lettered_at"), dlqAttempts: integer("dlq_attempts").notNull().default(0),
+  createdAt: integer("created_at").notNull(), updatedAt: integer("updated_at").notNull(),
+}, table => [
+  check("queue_jobs_status", sql`${table.status} IN ('pending','running','retry','completed','dead')`),
+  uniqueIndex("queue_jobs_dispatch_lookup").on(table.status, table.dispatchAt, table.jobKey),
+]);
+/** SQL trigger fences checkpoint + application writes against stale/expired leases. */
+export const jobCheckpoints = sqliteTable("job_checkpoints", {
+  jobKey: text("job_key").notNull().references(() => queueJobs.jobKey), name: text("name").notNull(),
+  reference: text("reference").notNull(), generation: integer("generation").notNull(),
+  leaseToken: text("lease_token").notNull(), recordedAt: integer("recorded_at").notNull(),
+}, table => [primaryKey({ columns: [table.jobKey, table.name] })]);
+export const jobFailures = sqliteTable("job_failures", {
+  jobKey: text("job_key").notNull().references(() => queueJobs.jobKey), generation: integer("generation").notNull(),
+  attempt: integer("attempt").notNull(), code: text("code").notNull(), retryable: integer("retryable", { mode: "boolean" }).notNull(),
+  recordedAt: integer("recorded_at").notNull(),
+}, table => [primaryKey({ columns: [table.jobKey, table.generation, table.attempt] })]);
+export const jobRecoveries = sqliteTable("job_recoveries", {
+  jobKey: text("job_key").notNull().references(() => queueJobs.jobKey), generation: integer("generation").notNull(),
+  reasonRef: text("reason_ref").notNull(), recordedAt: integer("recorded_at").notNull(),
+}, table => [primaryKey({ columns: [table.jobKey, table.generation] })]);
+export const queueRejections = sqliteTable("queue_rejections", {
+  messageId: text("message_id").primaryKey(), code: text("code").notNull(), recordedAt: integer("recorded_at").notNull(),
+});

@@ -12,6 +12,8 @@ OTP email sign-in, Slack OAuth code flow, team/channel setup wizard, bot members
 
 ## 3. Data capture
 
+비동기 기반(#10): 공유 `QueueEnvelope`와 `@teamplanet/queue`의 producer/lease/checkpoint 계약을 사용한다. 실제 수집/분석 handler는 소유권·동의·범위를 검증한 뒤 등록한다. 단일 production 작업 큐/DLQ와 Consumer의 배포·복구 절차는 `docs/QUEUE_OPERATIONS.md`를 따른다.
+
 Events API signature validation, event dedupe, thread context, edit/delete events, image references and access, history/backfill policies.
 
 ## 4. Three-model analysis

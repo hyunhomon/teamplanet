@@ -158,6 +158,8 @@ SELECT workspace_id, name, count(*) FROM teams GROUP BY workspace_id, name HAVIN
 
 ## 후속 계약과 미결 결정
 
+비동기 작업은 `packages/contracts/src/jobs.ts`의 version 1 `QueueEnvelope`와 event/run:stage:chunk 멱등 key를 사용한다. 원문·토큰 대신 저장소 참조만 전달한다. 실제 handler 등록 전 작업은 성공으로 처리하지 않는다. 공개 HTTP 큐 발행/복구 엔드포인트는 추가하지 않으며 내부 producer와 운영자 도구를 사용한다. 재시도·DLQ·체크포인트 계약은 `QUEUE_OPERATIONS.md`를 참고한다.
+
 Slack 설치/OAuth/연결/이벤트 상세는 #6/#11에서 정의한다: GET `/slack/install`, `/slack/oauth/callback`, `/slack/connection`, POST `/slack/events`.
 
 분석은 POST `/analysis-runs` (`analysisRunRequestSchema`: `{teamId,from,to}`), GET `/analysis-runs/:id`, `/analysis-runs/:id/assessments`, POST `/analysis-runs/:id/finalize`를 유지한다. 상태는 `queued → collecting → evidence_extraction → assessment → review → awaiting_professor → finalized`, 오류 상태는 `blocked_provider_billing`, `failed_provider_auth`, `rate_limited`, `failed_model`, `failed_data`, `cancelled`다. 기존 `CompetencyAssessment`의 근거·반례·limitations·requiresHumanReview를 보존한다. 현재 key 검증은 기존 초안의 네 key만 허용하며 #15 루브릭 승인을 의미하지 않는다.
