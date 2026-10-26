@@ -50,6 +50,9 @@
     "packages/contracts": {
       "name": "@teamplanet/contracts",
       "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.6.7",
+      },
     },
     "packages/db": {
       "name": "@teamplanet/db",

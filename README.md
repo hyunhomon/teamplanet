@@ -25,7 +25,7 @@
 - `docs/DELIVERY_PLAN.md` 개발 순서·검증 기준
 - `docs/DEPLOYMENT.md` 로컬 실행·단일 production 배포·CD 운영
 - `docs/ADR/0001-decisions.md` 의사결정 로그
-- `packages/contracts/` 공유 타입·JSON 계약
+- `packages/contracts/` 공유 타입·Zod 런타임 검증·합성 API fixture (`@teamplanet/contracts/fixtures`)
 - `packages/ai-core/` OpenRouter 402 에러 분류 유틸·기본 계약
 - `packages/db/` Drizzle D1 초기 스키마·마이그레이션
 - `prompts/` 모델 역할별 프롬프트 초안
@@ -53,6 +53,8 @@ production 주소는 `https://teamplanet.cloby.co`입니다. `main` push의 **CI
 `bun install --frozen-lockfile` 후 `bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 두 앱을 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
 
 DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 로컬은 `bun run db:migrate:local`, production은 CD의 `bun run db:migrate`로 SQL과 동의 이력 트리거를 순서대로 적용합니다. `drizzle-kit push`만으로는 트리거가 설치되지 않습니다.
+
+인증 API(#2)와 로그인 UI(#4)는 [API 계약](docs/API_CONTRACT.md)의 요청·세션·오류 스키마와 `packages/contracts/src/fixtures.ts`를 공유합니다. 교수별 소유권과 Slack 학생 매핑, 기존 DB의 평가·동의 이력을 보존하는 로컬 D1 업그레이드 검증은 [DB 안내](packages/db/README.md)를 참고하세요. 운영 정책과 루브릭·모델 ID 승인은 별도 이슈에 남아 있습니다.
 
 ## 정책
 

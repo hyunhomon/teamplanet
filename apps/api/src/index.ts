@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import type { D1Database } from "@cloudflare/workers-types";
+import type { ApiError } from "@teamplanet/contracts";
 
 export type Bindings = { DB: D1Database };
 export const app = new Hono<{ Bindings: Bindings }>();
@@ -21,7 +22,10 @@ app.get("/v1/health", async context => {
   }
 });
 
-app.notFound(context => context.json({ error: { code: "NOT_FOUND" } }, 404));
-app.onError((_error, context) => context.json({ error: { code: "INTERNAL_SERVER_ERROR" } }, 500));
+const errorBody = (code: "NOT_FOUND" | "INTERNAL_SERVER_ERROR", message: string): ApiError => ({
+  error: { code, message, requestId: `request_${crypto.randomUUID()}`, retryable: false },
+});
+app.notFound(context => context.json(errorBody("NOT_FOUND", "리소스를 찾을 수 없습니다."), 404));
+app.onError((_error, context) => context.json(errorBody("INTERNAL_SERVER_ERROR", "요청을 처리하지 못했습니다."), 500));
 
 export default app;
