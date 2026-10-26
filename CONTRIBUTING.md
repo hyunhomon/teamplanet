@@ -15,15 +15,15 @@
 
 5. CI와 동료 리뷰가 끝나면 병합합니다. 아직 완료 조건을 충족하지 못했다면 draft PR로 남깁니다.
 
-## 최소 CI
+## CI와 CD
 
-`.github/workflows/ci.yml`은 PR과 `main` push에서 Ubuntu 작업 **하나**만 실행합니다. 의존성 캐시·매트릭스·preview 환경은 사용하지 않습니다. Node.js 24를 설치하고 Bun 버전은 `package.json`의 `packageManager`를 사용합니다.
+`.github/workflows/ci.yml`의 **CI**는 PR과 `main` push의 검증을 담당합니다. `.github/workflows/cd.yml`의 **CD**는 같은 저장소의 `main` push CI가 성공한 뒤 그 SHA를 배포합니다. 각 워크플로는 Ubuntu 작업 하나를 사용합니다. 의존성 캐시·매트릭스·preview 환경은 사용하지 않습니다. Node.js 24와 `package.json`에 지정한 Bun을 사용합니다.
 
 - PR이면 GitHub API로 현재 PR과 연결 이슈의 실제 상태를 확인합니다. 이슈 누락, 닫힌 이슈, 마일스톤 누락·종료·불일치는 실패합니다. PR 번호를 이슈로 쓰거나 주석·코드 예제에만 번호를 넣어 통과시킬 수 없습니다.
 - `bun install --frozen-lockfile` → `bun run typecheck` → `bun test` → `bun run build`를 실행합니다. 테스트에는 실제 외부 모델 키나 학생 데이터가 필요하지 않습니다.
 - PR 본문·PR 마일스톤 수정 시 다시 실행합니다. **연결 이슈의 마일스톤만 바꾼 경우**에는 Actions에서 해당 PR 실행의 `Re-run all jobs`를 선택하세요. 재실행은 최신 메타데이터를 다시 조회합니다.
-- GitHub 토큰은 저장소·이슈·PR 읽기 권한만 가지며 PR 정책 단계에만 환경변수로 전달합니다. `main` push에서는 검증 후 Cloudflare Secret을 배포 단계에만 전달하여 원격 마이그레이션·API·웹을 배포합니다. 상세 내용은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
-- 같은 PR의 이전 실행은 새 실행 때 취소합니다. production 배포는 직렬화하고 중간에 취소하지 않습니다. 실행 제한은 10분입니다.
+- CI의 GitHub 토큰은 읽기 전용입니다. CD만 Release 게시를 위한 `contents: write`를 가지며, Cloudflare Secret은 배포 단계에만 전달합니다. 배포와 health 확인이 성공하면 [Releases](https://github.com/hyunhomon/teamplanet/releases)에 해당 커밋과 CI/CD 링크를 남깁니다. 상세 내용은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
+- CI의 오래된 실행은 새 실행 때 취소합니다. production CD는 직렬화하고 중간에 취소하지 않습니다. 두 워크플로의 실행 제한은 각각 10분입니다. 오래된 CI를 재실행해도 현재 main을 구버전으로 되돌리지 않습니다.
 
 ## 관리자의 최초 설정
 
