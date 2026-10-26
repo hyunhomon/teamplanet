@@ -44,7 +44,7 @@ bun run dev
 
 웹은 `http://127.0.0.1:4321`에서 열립니다. 기본 화면과 API 상태 확인에는 외부 서비스 비밀 값이 필요하지 않습니다. 외부 기능 구현 시 `.env.example`을 참고해 비밀 값과 합의된 3개 모델 ID를 등록합니다. 평가 역량명과 Slack OAuth scope는 운영 전에 확정해야 합니다.
 
-production 주소는 `https://teamplanet.cloby.co`입니다. `main` push의 **CI**가 성공하면 별도 **CD**가 배포하고, 정상 연결 확인 후 [GitHub Releases](https://github.com/hyunhomon/teamplanet/releases)에 배포 기록을 게시합니다. 상세 구성은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
+production 주소는 `https://teamplanet.cloby.co`입니다. `main` push의 **CI**가 성공하면 별도 **CD**가 배포하고, [GitHub Deployments](https://github.com/hyunhomon/teamplanet/deployments)에 커밋·진행 상태·결과·실행 로그를 기록합니다. 상세 구성은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
 
 ## 개발 검증
 

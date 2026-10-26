@@ -34,7 +34,11 @@ export function deploymentCandidate(event: WorkflowEvent, repository: string, cu
 }
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
-type Context = { repository: string; token: string; apiUrl: string; serverUrl: string; cdRunId: string };
+type Context = { repository: string; token: string; apiUrl: string; serverUrl: string; cdRunId: string; cdRunAttempt: string };
+
+function runLogUrl(context: Context) {
+  return `${context.serverUrl}/${context.repository}/actions/runs/${context.cdRunId}/attempts/${context.cdRunAttempt}`;
+}
 
 function githubClient(context: Context, fetcher: Fetcher) {
   return async function request<T>(path: string, method = "GET", body?: unknown): Promise<T | null> {
@@ -54,37 +58,40 @@ function githubClient(context: Context, fetcher: Fetcher) {
   };
 }
 
-export async function publishProductionRelease(run: VerifiedRun, context: Context, fetcher: Fetcher = fetch) {
+export async function createProductionDeployment(run: VerifiedRun, context: Context, fetcher: Fetcher = fetch) {
   const request = githubClient(context, fetcher);
-  const tag = `production-${run.sha.slice(0, 12)}`;
-  const ref = await request<{ object: { type: string; sha: string } }>(`git/ref/tags/${tag}`);
-  if (ref && (ref.object.type !== "commit" || ref.object.sha !== run.sha)) {
-    throw new Error(`Release tag ${tag} does not point to the verified commit.`);
-  }
-  const existing = await request<{ id: number }>(`releases/tags/${tag}`);
-  if (existing && !ref) throw new Error(`Release ${tag} has no matching tag.`);
-  const repositoryUrl = `${context.serverUrl}/${context.repository}`;
-  const body = [
-    "## Production 배포", "",
-    "- 서비스: https://teamplanet.cloby.co",
-    `- 커밋: [${run.sha}](${repositoryUrl}/commit/${run.sha})`,
-    `- CI: ${repositoryUrl}/actions/runs/${run.id}`,
-    `- CD: ${repositoryUrl}/actions/runs/${context.cdRunId}`,
-    `- 배포 확인 시각 (UTC): ${new Date().toISOString()}`,
-    "- D1 마이그레이션 → API Worker → 웹 Worker 배포 완료",
-    "- `/v1/health`: API·DB 연결 정상 확인", "",
-    "구성: `teamplanet-web` → `/v1/*` service binding → `teamplanet-api` → `teamplanet-production` D1.",
-    "운영 환경은 production 하나이며 이 릴리즈는 CI가 검증한 커밋의 성공한 배포 기록입니다.",
-  ].join("\n");
-  const metadata = { name: `Production · ${run.sha.slice(0, 7)}`, body, make_latest: "true" };
-  const release = existing
-    ? await request<{ html_url: string }>(`releases/${existing.id}`, "PATCH", metadata)
-    : await request<{ html_url: string }>("releases", "POST", {
-      ...metadata, tag_name: tag, target_commitish: run.sha, draft: false, prerelease: false,
-      generate_release_notes: true,
-    });
-  if (!release?.html_url) throw new Error("GitHub did not return a release URL.");
-  return release.html_url;
+  const deployment = await request<{ id: number }>("deployments", "POST", {
+    ref: run.sha,
+    auto_merge: false,
+    // The triggering CI has already validated this exact SHA.
+    required_contexts: [],
+    environment: "production",
+    production_environment: true,
+    transient_environment: false,
+    description: `Production via CD #${context.cdRunId}`,
+    payload: { ci_run_id: run.id, cd_run_id: context.cdRunId, cd_run_attempt: context.cdRunAttempt },
+  });
+  if (!Number.isSafeInteger(deployment?.id) || deployment!.id <= 0) throw new Error("GitHub did not return a deployment ID.");
+  return deployment!.id;
+}
+
+export async function recordDeploymentStatus(id: number, status: string, context: Context, fetcher: Fetcher = fetch) {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error("A valid deployment ID is required.");
+  const states: Record<string, { state: string; description: string }> = {
+    in_progress: { state: "in_progress", description: "Production build and deployment started." },
+    success: { state: "success", description: "Production deployment and API/database health check succeeded." },
+    failure: { state: "failure", description: "Production build, deployment, or health check failed. See CD logs." },
+    cancelled: { state: "error", description: "CD was cancelled. See CD logs for the last completed step." },
+  };
+  if (!Object.hasOwn(states, status)) throw new Error(`Unsupported deployment status: ${status}`);
+  const request = githubClient(context, fetcher);
+  await request(`deployments/${id}/statuses`, "POST", {
+    ...states[status],
+    environment: "production",
+    environment_url: "https://teamplanet.cloby.co",
+    log_url: runLogUrl(context),
+    auto_inactive: false,
+  });
 }
 
 async function main() {
@@ -96,6 +103,7 @@ async function main() {
     apiUrl: process.env.GITHUB_API_URL ?? "https://api.github.com",
     serverUrl: process.env.GITHUB_SERVER_URL ?? "https://github.com",
     cdRunId: process.env.GITHUB_RUN_ID ?? "",
+    cdRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? "1",
   };
   const mode = process.argv[2];
   if (mode === "check") {
@@ -107,16 +115,30 @@ async function main() {
     const { appendFile } = await import("node:fs/promises");
     await appendFile(GITHUB_OUTPUT, `deploy=${candidate !== null}\n`);
     console.log(candidate ? `Deploy verified commit ${candidate.sha}` : "Skip: this is not a successful CI of the current main commit.");
-  } else if (mode === "publish") {
+  } else if (mode === "start" || mode === "finish") {
     const run = verifiedRun(event, GITHUB_REPOSITORY);
-    if (!run || !/^\d+$/.test(context.cdRunId)) throw new Error("A trusted CI run and CD run ID are required.");
-    const url = await publishProductionRelease(run, context);
-    console.log(url);
-    if (GITHUB_STEP_SUMMARY) {
-      const { appendFile } = await import("node:fs/promises");
-      await appendFile(GITHUB_STEP_SUMMARY, `### Production 배포 완료\n\n[서비스](https://teamplanet.cloby.co/) · [Release](${url})\n`);
+    if (!run || !/^\d+$/.test(context.cdRunId) || !/^[1-9]\d*$/.test(context.cdRunAttempt)) {
+      throw new Error("A trusted CI run and CD run ID/attempt are required.");
     }
-  } else throw new Error("Expected check or publish mode.");
+    if (mode === "start") {
+      if (!GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required.");
+      const id = await createProductionDeployment(run, context);
+      const { appendFile } = await import("node:fs/promises");
+      // Save the ID first, so the final step can report a failed start-status request too.
+      await appendFile(GITHUB_OUTPUT, `deployment_id=${id}\n`);
+      await recordDeploymentStatus(id, "in_progress", context);
+      console.log(`Production deployment #${id} started for ${run.sha}`);
+    } else {
+      const id = Number(process.env.DEPLOYMENT_ID);
+      const status = process.env.DEPLOYMENT_STATUS ?? "";
+      await recordDeploymentStatus(id, status, context);
+      console.log(`Production deployment #${id}: ${status}`);
+      if (GITHUB_STEP_SUMMARY) {
+        const { appendFile } = await import("node:fs/promises");
+        await appendFile(GITHUB_STEP_SUMMARY, `### Production 배포: ${status}\n\n커밋: ${run.sha}\n\n[배포 이력](${context.serverUrl}/${context.repository}/deployments) · [실행 로그](${runLogUrl(context)}) · [서비스](https://teamplanet.cloby.co/)\n`);
+      }
+    }
+  } else throw new Error("Expected check, start, or finish mode.");
 }
 
 if (import.meta.main) {

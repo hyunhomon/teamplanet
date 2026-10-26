@@ -32,22 +32,22 @@ bun run dev
 
 Actions 목록에 **CI**와 **CD**가 별도 워크플로로 표시됩니다. 두 워크플로는 각각 Ubuntu 작업 하나를 사용하며, 배포 환경은 production만 있습니다.
 
-1. `.github/workflows/ci.yml` — PR과 `main` push에서 실행합니다. PR이면 연결 이슈·마일스톤 확인 후 고정 lockfile 설치 → 타입 검사 → 테스트 → 두 앱 빌드를 수행합니다. 배포하거나 Release를 만들지 않으며 권한은 읽기 전용입니다.
+1. `.github/workflows/ci.yml` — PR과 `main` push에서 실행합니다. PR이면 연결 이슈·마일스톤 확인 후 고정 lockfile 설치 → 타입 검사 → 테스트 → 두 앱 빌드를 수행합니다. 배포하지 않으며 권한은 읽기 전용입니다.
 2. `.github/workflows/cd.yml` — 같은 저장소의 `main` push CI가 성공한 경우에만 실행합니다. CI가 검증한 정확한 SHA를 checkout하고 시작 시 최신 `main`인지 확인합니다. 실패한 CI·PR·fork·오래된 커밋의 재실행은 배포하지 않습니다.
-3. CD가 고정 lockfile로 해당 SHA를 다시 빌드하고 원격 D1 마이그레이션 → API Worker → 웹 Worker를 배포합니다. `/v1/health`에서 API·DB 정상 응답을 확인한 다음 GitHub Release를 게시합니다.
+3. CD가 GitHub Deployment를 생성해 진행 중 상태를 기록하고, 고정 lockfile로 해당 SHA를 다시 빌드한 뒤 원격 D1 마이그레이션 → API Worker → 웹 Worker를 배포합니다. `/v1/health`에서 API·DB 정상 응답을 확인한 다음 성공 상태를 기록합니다. 빌드·배포·health 확인이 실패하거나 실행이 취소되면 마지막 단계에서 해당 실패/취소 결과를 기록합니다.
 
-CI는 새 커밋이 들어오면 오래된 검증을 취소합니다. CD는 `cd-production` concurrency group에서 직렬로 처리하고 진행 중인 배포를 새 push가 취소하지 않습니다. Cloudflare 토큰은 CD의 배포 단계에만 전달하며, GitHub 쓰기 권한은 CD의 Release 게시에 사용합니다. CI는 CD 산출물을 다운로드하지 않고, CD는 검증된 소스를 다시 빌드합니다.
+CI는 새 커밋이 들어오면 오래된 검증을 취소합니다. CD는 `cd-production` concurrency group에서 직렬로 처리하고 진행 중인 배포를 새 push가 취소하지 않습니다. Cloudflare 토큰은 CD의 배포 단계에만 전달합니다. CD의 GitHub 권한은 소스 읽기와 Deployment 기록 쓰기뿐이며 소스·태그·Release 쓰기 권한을 주지 않습니다. CD는 검증된 소스를 다시 빌드합니다.
 
-배포 실패 시 CD의 `Re-run failed jobs`로 재시도할 수 있습니다. D1은 이미 적용한 마이그레이션을 다시 실행하지 않습니다. 배포는 성공했지만 상태 확인이나 Release 게시가 실패하면 CD는 실패로 표시되고 Release는 새로 게시되지 않습니다. 현재 `main`의 CD를 재실행하면 동일 커밋으로 재배포한 뒤 Release 게시를 다시 시도합니다. 구버전 rollback은 관리자가 별도로 수행하며 오래된 CI 재실행으로 우회하지 않습니다.
+배포 실패 시 CD의 `Re-run failed jobs`로 재시도할 수 있습니다. D1은 이미 적용한 마이그레이션을 다시 실행하지 않습니다. 현재 `main`의 CD를 재실행하면 새로운 배포 시도로 기록합니다. 구버전 rollback은 관리자가 별도로 수행하며 오래된 CI 재실행으로 우회하지 않습니다.
 
-## Release 조회
+## 배포 이력과 로그 조회
 
-[GitHub Releases](https://github.com/hyunhomon/teamplanet/releases)에서 성공한 production 배포를 조회합니다.
+[GitHub Deployments](https://github.com/hyunhomon/teamplanet/deployments)에서 production 배포 이력을 조회합니다. CD 실행의 Summary에도 배포 이력·실행 로그·서비스 링크가 표시됩니다.
 
-- 태그는 `production-<커밋 SHA 앞 12자리>`, 제목은 `Production · <짧은 SHA>`입니다. 수동 버전 증가나 별도 preview/prerelease를 사용하지 않습니다.
-- 본문에는 서비스 주소, 전체 커밋 SHA, CI/CD 실행 링크, 배포 확인 시각, 마이그레이션과 health 확인 결과가 포함됩니다. 최초 생성 시 GitHub 자동 변경 내역도 추가합니다.
-- 같은 SHA를 재배포하면 기존 Release의 배포 정보를 갱신하고 중복 Release를 만들지 않습니다. 기존 태그가 다른 커밋을 가리키면 덮어쓰지 않고 실패합니다.
-- Release는 성공한 배포의 기록입니다. Release를 생성하는 행위가 배포를 시작하지 않으며, 소스 버전 복구만으로 DB 마이그레이션을 되돌릴 수는 없습니다.
+- 각 시도에 검증된 커밋 SHA, `production` 환경, CI/CD 실행 ID가 저장됩니다. 상태에는 생성/진행/완료 시각과 서비스 주소, CD 로그 링크가 기록됩니다.
+- 상태는 `in_progress` → `success` 또는 `failure`입니다. 취소는 GitHub가 지원하는 `error` 상태와 취소 설명으로 남깁니다. 실패한 시도를 성공 기록으로 덮어쓰지 않습니다.
+- 같은 SHA를 재배포해도 각 시도를 별도로 남깁니다. 재실행 attempt 번호와 해당 attempt의 로그 링크도 보존합니다. 시작 조건을 통과하지 못해 실제 배포를 하지 않은 실행은 Deployment를 만들지 않습니다.
+- 배포 로그를 위해 Release·태그·소스 압축 파일을 생성하지 않습니다. Deployment 기록은 실제 Cloudflare 배포와 별개인 이력이며 소스 버전 복구만으로 DB 마이그레이션을 되돌릴 수는 없습니다.
 
 GitHub 저장소 `hyunhomon/teamplanet`에는 다음 값을 설정합니다.
 

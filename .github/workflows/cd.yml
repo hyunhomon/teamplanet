@@ -7,7 +7,8 @@ on:
     types: [completed]
 
 permissions:
-  contents: write
+  contents: read
+  deployments: write
 
 concurrency:
   group: cd-production
@@ -40,7 +41,13 @@ jobs:
           node-version: "24"
       - name: Verify deployment commit
         id: candidate
-        run: bun .github/scripts/production-release.ts check
+        run: bun .github/scripts/production-deployment.ts check
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Start deployment log
+        id: deployment
+        if: steps.candidate.outputs.deploy == 'true'
+        run: bun .github/scripts/production-deployment.ts start
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Install dependencies
@@ -62,8 +69,10 @@ jobs:
           curl --fail-with-body --silent --show-error --retry 5 --retry-delay 3 --retry-all-errors --max-time 15 \
             https://teamplanet.cloby.co/v1/health --output "$RUNNER_TEMP/production-health.json"
           jq --exit-status '.service == "teamplanet-api" and .status == "ok"' "$RUNNER_TEMP/production-health.json"
-      - name: Publish production release
-        if: steps.candidate.outputs.deploy == 'true'
-        run: bun .github/scripts/production-release.ts publish
+      - name: Record deployment result
+        if: always() && steps.deployment.outputs.deployment_id != ''
+        run: bun .github/scripts/production-deployment.ts finish
         env:
           GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          DEPLOYMENT_STATUS: ${{ job.status }}

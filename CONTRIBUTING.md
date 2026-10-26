@@ -22,7 +22,7 @@
 - PR이면 GitHub API로 현재 PR과 연결 이슈의 실제 상태를 확인합니다. 이슈 누락, 닫힌 이슈, 마일스톤 누락·종료·불일치는 실패합니다. PR 번호를 이슈로 쓰거나 주석·코드 예제에만 번호를 넣어 통과시킬 수 없습니다.
 - `bun install --frozen-lockfile` → `bun run typecheck` → `bun test` → `bun run build`를 실행합니다. 테스트에는 실제 외부 모델 키나 학생 데이터가 필요하지 않습니다.
 - PR 본문·PR 마일스톤 수정 시 다시 실행합니다. **연결 이슈의 마일스톤만 바꾼 경우**에는 Actions에서 해당 PR 실행의 `Re-run all jobs`를 선택하세요. 재실행은 최신 메타데이터를 다시 조회합니다.
-- CI의 GitHub 토큰은 읽기 전용입니다. CD만 Release 게시를 위한 `contents: write`를 가지며, Cloudflare Secret은 배포 단계에만 전달합니다. 배포와 health 확인이 성공하면 [Releases](https://github.com/hyunhomon/teamplanet/releases)에 해당 커밋과 CI/CD 링크를 남깁니다. 상세 내용은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
+- CI는 읽기 전용이고 CD는 `contents: read`, `deployments: write`만 가집니다. Cloudflare Secret은 배포 단계에만 전달합니다. CD 시작과 성공·실패·취소 결과는 [Deployments](https://github.com/hyunhomon/teamplanet/deployments)에 커밋·CI/CD 실행 링크·서비스 주소와 함께 남습니다. 상세 내용은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
 - CI의 오래된 실행은 새 실행 때 취소합니다. production CD는 직렬화하고 중간에 취소하지 않습니다. 두 워크플로의 실행 제한은 각각 10분입니다. 오래된 CI를 재실행해도 현재 main을 구버전으로 되돌리지 않습니다.
 
 ## 관리자의 최초 설정
