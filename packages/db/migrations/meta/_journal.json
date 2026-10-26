@@ -22,6 +22,13 @@
       "when": 1793003128678,
       "tag": "0002_majestic_wolf_cub",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793005427057,
+      "tag": "0003_brainy_doctor_faustus",
+      "breakpoints": true
     }
   ]
 }

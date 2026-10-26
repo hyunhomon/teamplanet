@@ -6,6 +6,7 @@
       "name": "teamplanet",
       "devDependencies": {
         "@types/bun": "^1.3.0",
+        "miniflare": "5.20261019.2-beta",
         "typescript": "^5.9.3",
         "wrangler": "^4.152.0",
       },
@@ -16,7 +17,19 @@
       "dependencies": {
         "@teamplanet/contracts": "workspace:*",
         "@teamplanet/db": "workspace:*",
+        "@teamplanet/queue": "workspace:*",
         "hono": "^4.13.13",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261024.1",
+      },
+    },
+    "apps/consumer": {
+      "name": "@teamplanet/consumer",
+      "version": "0.0.0",
+      "dependencies": {
+        "@teamplanet/contracts": "workspace:*",
+        "@teamplanet/queue": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20261024.1",
@@ -62,6 +75,16 @@
       },
       "devDependencies": {
         "drizzle-kit": "^0.31.0",
+      },
+    },
+    "packages/queue": {
+      "name": "@teamplanet/queue",
+      "version": "0.0.0",
+      "dependencies": {
+        "@teamplanet/contracts": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261024.1",
       },
     },
   },
@@ -442,9 +465,13 @@
 
     "@teamplanet/api": ["@teamplanet/api@workspace:apps/api"],
 
+    "@teamplanet/consumer": ["@teamplanet/consumer@workspace:apps/consumer"],
+
     "@teamplanet/contracts": ["@teamplanet/contracts@workspace:packages/contracts"],
 
     "@teamplanet/db": ["@teamplanet/db@workspace:packages/db"],
+
+    "@teamplanet/queue": ["@teamplanet/queue@workspace:packages/queue"],
 
     "@teamplanet/web": ["@teamplanet/web@workspace:apps/web"],
 
