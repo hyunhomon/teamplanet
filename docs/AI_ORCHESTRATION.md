@@ -20,6 +20,14 @@
 6. 단계별 결과 JSON schema 검증과 evidence ID 정합성 확인.
 7. 모델 간 판단 불일치는 `needs_human_review` 플래그. 무조건 다수결이나 평균 점수로 합치지 않음.
 
+## 원문 비보관과 입력·결과 버전 — #5
+
+원문/이미지의 장기 저장소는 Slack이다. 분석 실행마다 허용 기간 전체를 History/Replies로 조회해 메모리에서 chunk 처리하고 서비스에는 링크·원문 revision/지문·범위 metadata·요약·결과를 남긴다. 원문 chunk/전체 Events payload를 DB·Queue·DLQ·로그·영구 checkpoint에 남기지 않는다. 재개는 참조 재조회와 revision 확인 후 진행한다. Slack에서 사라진 원문은 복원할 수 없으며 전체 coverage의 누락과 한계로 기록한다.
+
+리포트 열람·확정·출력 전 현재 원문과 요약을 검증한다. 수정·삭제·불일치는 근거 링크 제외·영향받은 초안/교수 확정본 무효화·새 버전 재분석으로 연결한다. 링크만 삭제하고 근거 없는 판단을 유지하지 않는다. Slack 장애/권한 오류는 삭제와 구분하고 검증 불가 결과를 최신으로 확정하지 않는다. 저장 요약·리포트는 수업 종료 후 3개월에 삭제한다.
+
+실행 중 모델에 원문을 보내는 사실은 고지한다. 식별자/이미지 가림 수준 및 선택 모델별 보관·학습 사용·처리 지역은 #15와 시작 전 확인 항목이다. 운영자의 저장 전략 승인을 이 외부 전송 세부 사항의 승인으로 추정하지 않는다. 상세 상태표는 [운영 정책](PRIVACY_AND_DATA.md)을 따른다.
+
 ## 비용 및 OpenRouter 오류
 
 - 클라이언트·서버 자체 `budget_usd`, `max_cost`, `token_quota`, `monthly_cap`, `cost_guardrail`을 적용하지 않는다.
@@ -44,10 +52,10 @@
 
 ```ts
 const evidence = await openrouter.complete(MODEL_EVIDENCE, fullContext);
-const events = validateEvidence(evidence, storedMessageIds);
+const events = validateEvidence(evidence, validatedSourceIds); // authorized, ephemeral Slack input
 const assessed = await openrouter.complete(MODEL_ASSESSOR, { fullContext, events, rubric });
 const review = await openrouter.complete(MODEL_REVIEWER, { fullContext, events, assessed });
-const results = reconcileWithEvidence(review, storedMessageIds); // unknown id => reject
+const results = reconcileWithEvidence(review, validatedSourceIds); // unknown id/revision => reject
 await saveDraftAssessment(runId, results); // professor finalizes later
 ```
 
