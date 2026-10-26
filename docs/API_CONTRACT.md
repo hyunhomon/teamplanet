@@ -170,4 +170,12 @@ Slack 설치/OAuth/연결/이벤트 상세는 #6/#11에서 정의한다: GET `/s
 {"error":{"code":"OPENROUTER_BILLING_BLOCKED","kind":"insufficient_credits","source":"openrouter_credits","providerStatus":402,"retryable":false}}
 ```
 
-`kind`는 `insufficient_credits | key_limit_exhausted | in_flight_budget | unspecified_provider_billing`이다. provider가 명시적 지연을 제공한 in-flight budget만 일시적 재시도가 가능하다. 일반 잔액 부족 402 자동 재시도·앱 비용 상한·모델 자동 폴백을 추가하지 않는다. 정책·대체 평가·보관·철회(#5), 루브릭·모델 ID(#15), Slack scope(#6)는 미결 상태를 유지한다.
+`kind`는 `insufficient_credits | key_limit_exhausted | in_flight_budget | unspecified_provider_billing`이다. provider가 명시적 지연을 제공한 in-flight budget만 일시적 재시도가 가능하다. 일반 잔액 부족 402 자동 재시도·앱 비용 상한·모델 자동 폴백을 추가하지 않는다. #5 서비스 정책은 아래 인수인계를 따르며 루브릭·모델/외부 전송 세부 조건(#15)과 Slack scope(#6)는 후속 확인 대상이다.
+
+## #5 파일럿 정책 인수인계 — 후속 API 확장
+
+[운영 정책](PRIVACY_AND_DATA.md)과 [ADR-0002](ADR/0002-pilot-policy.md)를 기준으로 #8/#9에서 교수의 오프라인 동의 확인+학생 QR 재확인·증빙 참조·계정/수업/버전 연결을 확장한다. 공개 QR/체크박스만으로 임의 학생의 동의를 쓰지 못하게 한다. 전원 사전 동의·고정 참가자 파일럿을 전제로 대체 평가/개정 전용 UI는 제외하되 서버 gate는 유지한다. 이 문서는 새 엔드포인트/공유 타입이 구현됐다는 뜻이 아니다.
+
+수업에는 실제 종료일·교수 연락처를, 문의에는 교수 설정 답변/보관 기한 n일과 접수별 만료 시각을 정의해야 한다. 문의는 접수+n일에 답변 여부와 무관하게 자동 삭제하며 설정 변경으로 기존 기한을 암묵적으로 바꾸지 않는다. 요약·리포트·근거/관련 이력은 수업 종료 후 3개월에 삭제한다. 구체 필드·공유 schema·런타임 검증·migration은 해당 구현 PR에서 함께 제공한다.
+
+#11/#12/#13/#16은 Slack 원문을 장기 저장하지 않고 참조·revision/지문·요약을 보관한다. 기존 messages.text와 평가 schema를 이번 문서 PR에서 삭제하지 않는다. 원문 재검증 실패/불일치와 실제 삭제를 구분하며, 근거 링크 제외 및 교수 확정본 무효화·재검토 상태를 #14/#22/#23에서 표현한다. 열람·확정·출력은 최신 원문 검증을 거쳐야 하고, 학생 페이지는 본인 동의/문의에 한정한다. 학생 피드백은 교수가 검증된 리포트를 출력해 전달한다.
