@@ -1,6 +1,6 @@
 # TeamPlanet
 
-팀 프로젝트의 **지정된 Slack 채널 내 전체 대화**를 수동 기록 없이 수집하여, 교수에게 **4개 커뮤니케이션 역량별 정성 평가와 원문 근거**를 제공하는 평가 지원 도구입니다.
+팀 프로젝트의 **지정된 Slack 채널 내 전체 대화**를 수동 기록 없이 수집하여, 교수에게 **선택한 커뮤니케이션 역량별 정성 평가와 원문 근거**를 제공하는 평가 지원 도구입니다.
 
 > Astro SSR 웹과 Hono API의 실행 가능한 초기 구조, D1 마이그레이션, GitHub Actions production CD가 구성되어 있습니다. 교수 인증·Slack OAuth·수집·AI 분석 기능은 아직 구현 전입니다.
 
@@ -12,9 +12,9 @@
 - Slack을 원문 저장소로 사용하고 서비스는 **메시지 링크·변경 확인 metadata·요약·결과**를 보관합니다. 원문/이미지는 실행 중에만 처리합니다. 리포트 열람·확정·출력 전 원문을 재검증하며 변경 시 교수 확정본도 무효화합니다.
 - 요약·리포트 등은 **수업 종료 후 3개월** 보관 후 삭제합니다. 웹 문의는 **접수 후 교수 설정 n일**에 자동 삭제합니다. 학생 문의·교수의 리포트 출력 전달은 후속 구현 범위이며 문서가 기능 구현을 뜻하지 않습니다.
 - 교수는 이메일 OTP로 접근해 **기간을 지정하고 수동으로 분석**을 시작합니다. 자동 주기 분석은 MVP 제외.
-- AI는 **3개 모델을 단계별 오케스트레이션**하며, 원문 근거가 있는 역량별 정성 평가를 만듭니다.
+- 교수는 초기 설정에서 **4개 중 1~4개 역량을 선택**합니다. AI는 A/B/C 별도 호출로 원문 근거가 있는 선택 역량별 정성 평가를 만듭니다. 선택 UI와 실행 연결은 #3/#9/#16 후속 구현입니다.
 - 앱 레벨의 비용 상한/총토큰 예산/강제 정지는 **없습니다**. 실제 OpenRouter의 잔액 부족·키 한도 등 **402 응답으로만** 과금 부족을 판단합니다. 402 이외 오류는 별도 처리합니다.
-- 모델 ID는 운영 시 `.env`에 주입합니다. 직전 합의 모델명을 현재 번들에서 정확히 확인할 수 없어 **임의의 모델 ID로 고정하지 않았습니다**. 세 역할은 확정이며 슬롯에 합의된 모델 ID를 넣으면 됩니다.
+- 초기 `qwen-pilot-v1`은 세 역할 모두 `qwen/qwen3.5-9b`·DeepInfra BF16·ZDR 전용입니다. 실제 표시명/동의된 프로젝트 이미지 전송을 허용합니다. [결정 근거·검증 한계](docs/ADR/0003-rubric-model-profile.md)를 따르며 실제 모델 품질 검증은 아직 수행하지 않았습니다.
 
 ## 파일 안내
 
@@ -48,7 +48,7 @@ bun run db:migrate:local
 bun run dev
 ```
 
-웹은 `http://127.0.0.1:4321`에서 열립니다. 기본 화면과 API 상태 확인에는 외부 서비스 비밀 값이 필요하지 않습니다. 외부 기능 구현 시 `.env.example`을 참고해 비밀 값과 합의된 3개 모델 ID를 등록합니다. 평가 역량명과 Slack OAuth scope는 운영 전에 확정해야 합니다.
+웹은 `http://127.0.0.1:4321`에서 열립니다. 기본 화면과 API 상태 확인에는 외부 서비스 비밀 값이 필요하지 않습니다. 외부 기능 구현 시 `.env.example`을 참고해 비밀 값과 합의된 3개 모델 ID를 등록합니다. 선택 설정 UI는 후속 구현이며 Slack OAuth scope와 실제 전송 고지는 운영 전에 확인해야 합니다.
 
 production 주소는 `https://teamplanet.cloby.co`입니다. `main` push의 **CI**가 성공하면 별도 **CD**가 배포하고, [GitHub Deployments](https://github.com/hyunhomon/teamplanet/deployments)에 커밋·진행 상태·결과·실행 로그를 기록합니다. 상세 구성은 [배포 문서](docs/DEPLOYMENT.md)를 참고하세요.
 
@@ -62,7 +62,7 @@ production 주소는 `https://teamplanet.cloby.co`입니다. `main` push의 **CI
 
 DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 로컬은 `bun run db:migrate:local`, production은 CD의 `bun run db:migrate`로 SQL과 동의 이력 트리거를 순서대로 적용합니다. `drizzle-kit push`만으로는 트리거가 설치되지 않습니다.
 
-인증 API(#2)와 로그인 UI(#4)는 [API 계약](docs/API_CONTRACT.md)의 요청·세션·오류 스키마와 `packages/contracts/src/fixtures.ts`를 공유합니다. 교수별 소유권과 Slack 학생 매핑, 기존 DB 평가·동의 이력의 로컬 D1 업그레이드 검증은 [DB 안내](packages/db/README.md)를 참고하세요. 서비스 정책은 [ADR-0002](docs/ADR/0002-pilot-policy.md)에 승인 기록을 남기며, 루브릭·모델 ID와 외부 전송 상세 고지 확인은 #15 및 파일럿 시작 전에 남아 있습니다.
+인증 API(#2)와 로그인 UI(#4)는 [API 계약](docs/API_CONTRACT.md)의 요청·세션·오류 스키마와 `packages/contracts/src/fixtures.ts`를 공유합니다. 교수별 소유권과 Slack 학생 매핑, 기존 DB 평가·동의 이력의 로컬 D1 업그레이드 검증은 [DB 안내](packages/db/README.md)를 참고하세요. 서비스 정책은 [ADR-0002](docs/ADR/0002-pilot-policy.md)에 승인 기록을 남기며, 루브릭·모델 결정은 [ADR-0003](docs/ADR/0003-rubric-model-profile.md)에 기록하며 실제 전송 고지·품질·운영 확인은 파일럿 시작 전에 남아 있습니다.
 
 ## 정책
 

@@ -44,4 +44,5 @@ export interface ProviderBillingError {
 
 export * from "./api";
 export * from "./validation";
+export * from "./rubric";
 export * from "./jobs";

@@ -162,7 +162,9 @@ SELECT workspace_id, name, count(*) FROM teams GROUP BY workspace_id, name HAVIN
 
 Slack 설치/OAuth/연결/이벤트 상세는 #6/#11에서 정의한다: GET `/slack/install`, `/slack/oauth/callback`, `/slack/connection`, POST `/slack/events`.
 
-분석은 POST `/analysis-runs` (`analysisRunRequestSchema`: `{teamId,from,to}`), GET `/analysis-runs/:id`, `/analysis-runs/:id/assessments`, POST `/analysis-runs/:id/finalize`를 유지한다. 상태는 `queued → collecting → evidence_extraction → assessment → review → awaiting_professor → finalized`, 오류 상태는 `blocked_provider_billing`, `failed_provider_auth`, `rate_limited`, `failed_model`, `failed_data`, `cancelled`다. 기존 `CompetencyAssessment`의 근거·반례·limitations·requiresHumanReview를 보존한다. 현재 key 검증은 기존 초안의 네 key만 허용하며 #15 루브릭 승인을 의미하지 않는다.
+분석은 POST `/analysis-runs` (`analysisRunRequestSchema`: `{teamId,from,to}`), GET `/analysis-runs/:id`, `/analysis-runs/:id/assessments`, POST `/analysis-runs/:id/finalize`를 유지한다. 상태는 `queued → collecting → evidence_extraction → assessment → review → awaiting_professor → finalized`, 오류 상태는 `blocked_provider_billing`, `failed_provider_auth`, `rate_limited`, `failed_model`, `failed_data`, `cancelled`다. `CompetencyAssessment`의 근거·반례·limitations·requiresHumanReview를 보존한다.
+
+#15 공통 `rubricSelectionSchema`는 `{rubricVersion:"communication-v1",selectedCompetencies:["clarity"]}` 형태로 1~4개의 중복 없는 key를 검증한다. #3은 교수 소유 수업 설정 API/Drizzle schema/신규 migration에 이 구성을 포함하고 #9는 초기 선택 UI를 구현한다. 현재 createCourse schema에는 아직 이 필드가 없으므로 해당 후속 변경 전 전송하면 거부된다. #16은 클라이언트 임의 선택 대신 서버의 수업 설정을 run에 스냅샷한다. `assessmentSetSchema`로 학생×선택 key 전체를 검사하고 #17~#20은 원문/행위자/동의/최신성까지 검증한다. 미선택 항목을 생성하거나 빈 결과로 누락시키지 않는다.
 
 공급자 402는 기존 `ProviderBillingError` 계약을 유지한다. 인증·팀·동의 오류와 별도이며 `apiErrorSchema`로 파싱하지 않는다.
 
@@ -170,7 +172,7 @@ Slack 설치/OAuth/연결/이벤트 상세는 #6/#11에서 정의한다: GET `/s
 {"error":{"code":"OPENROUTER_BILLING_BLOCKED","kind":"insufficient_credits","source":"openrouter_credits","providerStatus":402,"retryable":false}}
 ```
 
-`kind`는 `insufficient_credits | key_limit_exhausted | in_flight_budget | unspecified_provider_billing`이다. provider가 명시적 지연을 제공한 in-flight budget만 일시적 재시도가 가능하다. 일반 잔액 부족 402 자동 재시도·앱 비용 상한·모델 자동 폴백을 추가하지 않는다. #5 서비스 정책은 아래 인수인계를 따르며 루브릭·모델/외부 전송 세부 조건(#15)과 Slack scope(#6)는 후속 확인 대상이다.
+`kind`는 `insufficient_credits | key_limit_exhausted | in_flight_budget | unspecified_provider_billing`이다. provider가 명시적 지연을 제공한 in-flight budget만 일시적 재시도가 가능하다. 일반 잔액 부족 402 자동 재시도·앱 비용 상한·모델 자동 폴백을 추가하지 않는다. #5 서비스 정책은 아래 인수인계를 따르며 루브릭·모델/전송 결정은 ADR-0003을 따르며 실제 외부 전송 고지와 Slack scope(#6)는 시작 전 확인 대상이다.
 
 ## #5 파일럿 정책 인수인계 — 후속 API 확장
 
