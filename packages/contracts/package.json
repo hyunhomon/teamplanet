@@ -3,6 +3,6 @@
   "version": "0.0.0",
   "type": "module",
   "private": true,
-  "exports": { ".": "./src/index.ts", "./fixtures": "./src/fixtures.ts" },
+  "exports": { ".": "./src/index.ts", "./fixtures": "./src/fixtures.ts", "./evaluation-fixtures": "./src/evaluation-fixtures.ts" },
   "dependencies": { "zod": "4.6.7" }
 }

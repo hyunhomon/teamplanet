@@ -24,9 +24,11 @@ Events API signature validation, event dedupe, thread context, edit/delete event
 
 Run-state machine, chunk pipeline on full in-scope logs, model-ID config, stage schemas, source ID integrity validation, provider 402 normalized errors.
 
+#15는 [ADR-0003](ADR/0003-rubric-model-profile.md)의 선택형 `communication-v1`, Qwen/DeepInfra ZDR 프로필과 합성 평가 fixture를 제공한다. #3/#9는 초기 교수의 1~4개 역량 선택을 저장/표시하고 #16은 실행 스냅샷, #17~#20은 선택 범위와 1회 수정 후 재검토를 연결한다. 외부 교수의 루브릭 사전 승인은 MVP 개발 선행 조건이 아니다.
+
 ## 5. Professor dashboard
 
-Period picker, launch/progress UI, 4-competency qualitative outcomes, click-through evidence, uncertainty/review, finalize audit trail.
+Period picker, launch/progress UI, selected-competency qualitative outcomes, click-through evidence, uncertainty/review, finalize audit trail.
 
 #22/#23은 열람·확정·출력 전 원문/요약 재검증과 불일치 링크 제외·교수 확정본까지 무효화/재검토를 연결한다. 학생 QR #29(M2), 웹 문의 #30(M5), 교수 리포트 출력 #31(M5)을 #24 E2E의 선행 작업으로 추적한다. 문의는 접수 후 교수 설정 n일 자동 삭제, 요약·리포트 등은 수업 종료 후 3개월 삭제다. 학생용 평가 열람 포털은 제외한다.
 

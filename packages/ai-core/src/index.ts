@@ -1,4 +1,6 @@
 /** Minimal OpenRouter adapter contracts. Deliberately no app cost-budget guards. */
+import { providerPolicy } from "./model-policy";
+export { modelProfile, providerPolicy } from "./model-policy";
 export type ModelRole = "evidence" | "assessor" | "reviewer";
 
 export function getModelIds(env: Record<string, string | undefined>): Record<ModelRole, string> {
@@ -56,7 +58,7 @@ export async function requestOpenRouter(
   const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages }), // intentionally no cost ceiling or max_tokens
+    body: JSON.stringify({ model, messages, provider: providerPolicy, reasoning: { enabled: false } }),
   });
   const rawBody = await res.text();
   let payload: unknown;

@@ -6,6 +6,18 @@ function requestWith(response: Response) {
 }
 
 describe("requestOpenRouter", () => {
+  test("pins the approved ZDR provider without fallback or app budget guards", async () => {
+    let calls = 0;
+    await requestOpenRouter("test-key", "qwen/qwen3.5-9b", [], async (_url, init) => {
+      calls++;
+      const body = JSON.parse(String(init.body));
+      expect(body.provider).toEqual({ only: ["deepinfra/bf16"], allow_fallbacks: false, require_parameters: true, data_collection: "deny", zdr: true });
+      expect(body.reasoning).toEqual({ enabled: false });
+      expect(body.max_tokens).toBeUndefined();
+      return Response.json({ error: { message: "No permitted endpoint" } }, { status: 503 });
+    });
+    expect(calls).toBe(1);
+  });
   test("returns a successful completion", async () => {
     const data = { choices: [{ message: { content: "{}" }, finish_reason: "stop" }] };
     expect(await requestWith(Response.json(data))).toEqual({ ok: true, data });
