@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { D1Database } from "@cloudflare/workers-types";
 import { otpRequestSchema, otpVerifySchema, type Professor } from "@teamplanet/contracts";
-import { apiError } from "./errors";
+import { apiError, parseBody } from "./errors";
 import { defaultMailer, type MailBindings, type Mailer } from "./mailer";
 
 /** Operating defaults decided in #2. Fixture values in @teamplanet/contracts are not policy. */
@@ -49,19 +49,6 @@ function randomToken() {
 }
 const iso = (ms: number) => new Date(ms).toISOString();
 
-type Schema<T> = {
-  safeParse(value: unknown): { success: true; data: T } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } };
-};
-async function parseBody<T>(context: Context, schema: Schema<T>) {
-  let body: unknown;
-  try { body = await context.req.json(); } catch { body = undefined; }
-  const result = schema.safeParse(body);
-  if (result.success) return { data: result.data };
-  const issues = result.error.issues.map(issue => ({
-    path: issue.path.filter((part): part is string | number => typeof part !== "symbol"), message: issue.message,
-  }));
-  return { error: apiError(context, "VALIDATION_ERROR", "요청 형식을 확인하세요.", { issues }) };
-}
 
 type SessionRow = { id: string; email: string; created_at: number; expires_at: number };
 /** Resolves the professor for a session token; #3 builds its ownership guard on this. */

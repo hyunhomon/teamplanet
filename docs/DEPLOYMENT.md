@@ -37,7 +37,7 @@ cd apps/api && bunx wrangler d1 execute DB --local --command "INSERT INTO profes
 
 웹은 `http://127.0.0.1:4321`, 로컬 API는 `http://127.0.0.1:8787`입니다. 두 개발 서버를 함께 실행해야 서비스 바인딩이 연결됩니다. 로컬 DB는 Wrangler의 `.wrangler/state`에 보관되며 production DB를 사용하지 않습니다.
 
-`bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 세 앱을 검증합니다. `bun run queue:verify:local`은 실제 Consumer·격리된 로컬 Queue/D1 왕복과 native DLQ를 검증합니다. `/v1/health`는 API와 DB 연결 상태만 확인하며 학생 데이터를 반환하지 않습니다. Consumer는 합성 probe만 처리하고 Slack 연결·수집·분석 handler는 후속 구현 대상입니다. 미구현 API는 404를 반환합니다. 일반 개발에서 생산자·Consumer 연결과 같은 D1 persist 경로 사용법은 [Queue 운영 문서](QUEUE_OPERATIONS.md)를 참고하세요.
+`bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 세 앱을 검증합니다. `bun run queue:verify:local`은 실제 Consumer·격리된 로컬 Queue/D1 왕복과 native DLQ를 검증합니다. `/v1/health`는 API와 DB 연결 상태만 확인하며 학생 데이터를 반환하지 않습니다. Consumer는 합성 probe만 처리하고 Slack 연결·수집·분석 handler는 후속 구현 대상입니다. 세션 없는 `/v1` 요청은 미구현 경로도 401, 로그인 상태의 미구현 경로는 404입니다. 일반 개발에서 생산자·Consumer 연결과 같은 D1 persist 경로 사용법은 [Queue 운영 문서](QUEUE_OPERATIONS.md)를 참고하세요.
 
 ## GitHub Actions CI / CD
 
