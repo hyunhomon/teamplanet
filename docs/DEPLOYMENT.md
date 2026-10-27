@@ -26,9 +26,18 @@ bun run db:migrate:local
 bun run dev
 ```
 
+로컬 교수 로그인은 실제 메일 대신 API 콘솔로 OTP를 받습니다. `apps/api/.dev.vars.example`을 `apps/api/.dev.vars`로 복사하고 합성 교수를 등록합니다.
+
+```sh
+cp apps/api/.dev.vars.example apps/api/.dev.vars
+cd apps/api && bunx wrangler d1 execute DB --local --command "INSERT INTO professors (id, email, created_at) VALUES ('prof_00000000-0000-4000-8000-000000000001', 'professor-a@example.invalid', 1793000000000)"
+```
+
+`http://127.0.0.1:4321`에서 OTP를 요청하면 API 로그에 `[local dev only] TeamPlanet OTP ...`가 찍힙니다. 콘솔 발송은 `AUTH_DEV_LOG_OTP=true`와 loopback 요청 host가 모두 맞을 때만 동작하므로 production에서는 켜지지 않습니다. 세션 쿠키는 production과 같은 `__Host-` Secure 쿠키입니다. Chromium·Firefox는 `127.0.0.1`/`localhost`의 HTTP에서도 이 쿠키를 받습니다. Safari 로컬 로그인은 지원하지 않습니다.
+
 웹은 `http://127.0.0.1:4321`, 로컬 API는 `http://127.0.0.1:8787`입니다. 두 개발 서버를 함께 실행해야 서비스 바인딩이 연결됩니다. 로컬 DB는 Wrangler의 `.wrangler/state`에 보관되며 production DB를 사용하지 않습니다.
 
-`bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 세 앱을 검증합니다. `bun run queue:verify:local`은 실제 Consumer·격리된 로컬 Queue/D1 왕복과 native DLQ를 검증합니다. `/v1/health`는 API와 DB 연결 상태만 확인하며 학생 데이터를 반환하지 않습니다. Consumer는 합성 probe만 처리하고 실제 교수 로그인·Slack 연결·수집·분석 handler는 후속 구현 대상입니다. 미구현 API는 404를 반환합니다. 일반 개발에서 생산자·Consumer 연결과 같은 D1 persist 경로 사용법은 [Queue 운영 문서](QUEUE_OPERATIONS.md)를 참고하세요.
+`bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 세 앱을 검증합니다. `bun run queue:verify:local`은 실제 Consumer·격리된 로컬 Queue/D1 왕복과 native DLQ를 검증합니다. `/v1/health`는 API와 DB 연결 상태만 확인하며 학생 데이터를 반환하지 않습니다. Consumer는 합성 probe만 처리하고 Slack 연결·수집·분석 handler는 후속 구현 대상입니다. 미구현 API는 404를 반환합니다. 일반 개발에서 생산자·Consumer 연결과 같은 D1 persist 경로 사용법은 [Queue 운영 문서](QUEUE_OPERATIONS.md)를 참고하세요.
 
 ## GitHub Actions CI / CD
 
@@ -92,6 +101,27 @@ bun run deploy
 
 DB 변경 시 `bun run db:generate`로 마이그레이션을 추가하고 기존 SQL 파일을 수정하지 않습니다. `drizzle-kit push`만으로는 동의 이력 트리거가 설치되지 않습니다. CD는 마이그레이션을 먼저 적용하므로 이미 실행 중인 코드와 호환되는 변경을 사용합니다. 데이터 삭제·비호환 변경은 별도 이관 계획을 마련합니다.
 
-Slack·메일·OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니다. `.dev.vars`, `.env`, 인증 토큰과 학생 데이터는 커밋하지 않습니다. UI의 연결 표시는 실제 API 상태이며, 초기 화면에서 로그인이나 분석이 구현된 것처럼 표시하지 않습니다.
+### 교수 로그인 메일(Resend)
+
+API Worker는 [Resend](https://resend.com/docs/api-reference/emails/send-email) HTTP API로 OTP를 보냅니다. 두 값이 없으면 OTP 요청은 `EMAIL_DELIVERY_UNAVAILABLE`/503이며 성공으로 표시하지 않습니다.
+
+1. Resend에서 발신 도메인을 추가하고 안내된 DNS 레코드(SPF·DKIM)를 Cloudflare DNS에 등록한 뒤 검증합니다.
+2. 발송 전용 API 키를 만들고 API Worker에 등록합니다. 값은 저장소·이슈·PR에 남기지 않습니다.
+
+```sh
+cd apps/api
+bunx wrangler secret put RESEND_API_KEY
+bunx wrangler secret put AUTH_EMAIL_FROM   # 예: TeamPlanet <login@검증된-도메인>
+```
+
+3. 교수 이메일을 production D1에 등록합니다. ID는 `prof_<소문자 UUIDv4>`, 이메일은 소문자입니다.
+
+```sh
+bunx wrangler d1 execute DB --remote --command "INSERT INTO professors (id, email, created_at) VALUES ('prof_<uuid>', '<email>', <epoch-ms>)"
+```
+
+4. 실제 전달 확인: 등록한 본인 테스트 이메일로 https://teamplanet.cloby.co 에서 OTP를 요청하고 메일 수신, 로그인, `/v1/auth/me` 200, 로그아웃 후 401을 확인합니다. Resend 대시보드의 Emails 기록과 `bunx wrangler tail teamplanet-api`의 `auth.email_delivery_failed` 유무도 확인합니다. 로그에는 OTP·토큰을 남기지 않습니다.
+
+Slack·OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니다. `.dev.vars`, `.env`, 인증 토큰과 학생 데이터는 커밋하지 않습니다. UI의 연결 표시는 실제 API 상태이며, 초기 화면에서 로그인이나 분석이 구현된 것처럼 표시하지 않습니다.
 
 참고: [Cloudflare GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/), [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Astro Cloudflare 어댑터](https://docs.astro.build/en/guides/integrations-guide/cloudflare/).

@@ -27,7 +27,7 @@ test("database failure is an unavailable response without internal details", asy
 });
 
 test("unimplemented endpoints do not pretend to authenticate or collect data", async () => {
-  const response = await app.request("/v1/auth/otp/request", { method: "POST" }, database());
+  const response = await app.request("/v1/courses", {}, database());
   expect(response.status).toBe(404);
   const body = apiErrorSchema.parse(await response.json());
   expect(body.error.code).toBe("NOT_FOUND");
