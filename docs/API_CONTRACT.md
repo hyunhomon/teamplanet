@@ -1,6 +1,6 @@
 # API Contract
 
-이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증·Slack·동의 기능은 후속 이슈에서 구현하며 현재 미구현 경로는 404를 반환한다. `/health`는 기존 서비스 상태 응답을 유지한다.
+이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3에서 구현했다. Slack·동의 기능은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
 
@@ -67,6 +67,28 @@ WHERE s.id = :student_id AND c.professor_id = :session_professor_id;
 
 미인증/만료 세션은 401, 자기 소유가 아닌 리소스와 없는 리소스는 같은 404다. 403은 Origin/CSRF 등 리소스 존재 여부와 관계없는 거부에 쓴다. 목록은 세션 교수 소유 데이터만 반환한다. Slack callback/events의 state/서명 인증은 #6/#11에서 구현한다.
 
+### 서버 가드 — #3 (`apps/api/src/guard.ts`)
+
+요청은 다음 순서로 거부된다. 앞 단계에서 막히면 뒤 단계와 핸들러, DB 쓰기는 실행되지 않는다.
+
+1. GET/HEAD/OPTIONS 외 요청의 `Origin`이 요청 URL origin과 다르면 403 `FORBIDDEN`.
+2. 기본 거부: `/v1/health`와 `/v1/auth/*`를 뺀 모든 `/v1` 경로는 유효한 세션이 없으면 401 `UNAUTHENTICATED`. 세션 교수는 `context.get("professor")`로만 얻는다.
+3. 경로 ID 형식이 틀리면 400 `VALIDATION_ERROR`.
+4. `owned(context, kind, id)`가 null이면 404 `NOT_FOUND`. `kind`는 `course | team | student | run | evidence`이며 모두 `courses.professor_id = 세션 교수`까지 조인한다. assessment는 run 소유권으로 확인한다.
+
+Slack OAuth callback과 Events는 교수 세션이 아니라 state/서명으로 인증하므로 #6/#11에서 1·2단계 예외 목록에 추가한다. 예외 경로도 학생 데이터 접근 전에 자체 검증을 통과해야 한다. `/v1/health`는 학생·교수 데이터를 반환하지 않는다.
+
+감사 로그는 `audit_events`(`actor_professor_id, action, target_type, target_id, result, recorded_at`)다. `audit(context, event, now)`는 INSERT 문을 반환하므로 감사 대상 쓰기와 `DB.batch`로 원자적으로 묶거나 단독 `.run()` 한다. 열은 ID와 열거값뿐이며 본문·요약·이름·OTP·토큰을 넣을 자리가 없다. `result`는 `succeeded | denied`이며 남의 리소스 조회 시도도 `denied`로 남는다. 동의 변경(#8)·데이터 열람(#22)·평가 확정(#23)은 `AuditAction`에 값을 추가해 같은 방식으로 기록한다. 보관 만료 정리는 #14 범위다.
+
+```ts
+routes.get("/teams/:teamId", async context => {
+  const team = await owned<TeamRow>(context, "team", teamId);       // 세션 교수 소유만
+  await audit(context, { action: "team.read", targetType: "team", targetId: teamId, result: team ? "succeeded" : "denied" }, now).run();
+  if (!team) return apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다.");
+  ...
+});
+```
+
 ## 인증 계약 — #2와 #4의 시작점
 
 | Method / Path | 요청 schema / JSON | 성공 status / 응답 schema |
@@ -79,6 +101,20 @@ WHERE s.id = :student_id AND c.professor_id = :session_professor_id;
 `code`는 앞자리 0을 보존하는 6자리 문자열이다. `Professor`는 `{id, email, createdAt}`이며 세션 토큰·OTP는 응답 본문에 넣지 않는다. 세션 쿠키는 `__Host-teamplanet_session`, `HttpOnly; Secure; SameSite=Lax; Path=/`, Domain 없음이다. 로컬 HTTP 쿠키 운용은 #2에서 명시적으로 분리하며 production 플래그를 약화하지 않는다. 브라우저는 같은 origin `/v1`과 `credentials: "same-origin"`을 쓴다. 변경 요청은 서버의 Origin/CSRF 검사를 통과해야 한다. 만료·회전·서버 세션 무효화·저장소는 #2 구현 범위다. 로그아웃은 반복 호출에도 200, 로그인하지 않은 `/auth/me`는 `UNAUTHENTICATED`/401이다. 인증 응답은 `Cache-Control: no-store`다.
 
 OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성공/실패 형태·타이밍 정책을 사용한다. 메일 제공자 실패를 발송 성공으로 꾸미지 않는다. 허용 기준·제공자·만료/시도/쿨다운 수치는 #2에서 설정으로 정하며 fixture 숫자를 운영 정책으로 확정하지 않는다. 오입력/재사용/경합 실패는 `OTP_INVALID`, 만료는 `OTP_EXPIRED`, 반복 시도는 `RATE_LIMITED`, 발송 장애는 `EMAIL_DELIVERY_UNAVAILABLE`다. UI는 `resendAvailableAt`까지 기다리고 서버의 429 및 `retryAfterSeconds`/`Retry-After`를 우선한다.
+
+#2 구현 정책(`apps/api/src/auth.ts`의 `authPolicy`):
+
+| 항목 | 값 |
+|---|---|
+| 로그인 허용 | `professors` 테이블에 등록된 이메일만. 자동 가입 없음. 운영자가 D1에 직접 등록 |
+| OTP | 6자리, 5분 만료, 단일 사용, challenge당 검증 5회. 5회 초과는 `RATE_LIMITED`, 새 코드 필요 |
+| 발송 제한 | 이메일당 재발송 60초, 1시간 5회. 등록 여부와 무관하게 동일 적용 |
+| 세션 | 8시간 고정 만료, 슬라이딩 없음. 로그인마다 새 토큰. 요청에 실린 이전 세션은 폐기 |
+| 저장 | `auth_challenges`·`auth_sessions`에 OTP·토큰의 SHA-256만 저장. challenge 행은 24시간 후 삭제 |
+| 열거 방지 | 미등록 이메일도 같은 202·challenge·발송 제한. 메일은 보내지 않음. OTP 요청 응답은 최소 1초 |
+| Origin | `/v1/*`의 GET/HEAD/OPTIONS 외 요청은 `Origin`이 요청 URL origin과 같아야 함. 아니면 `FORBIDDEN`/403 |
+
+등록 교수에게 메일 제공자가 실패하면 `EMAIL_DELIVERY_UNAVAILABLE`/503이고 challenge를 지운다. 이 응답은 등록 이메일에서만 나오므로 제공자 장애 중에는 등록 여부가 드러날 수 있다. 성공으로 꾸미지 않는다는 계약을 우선했다. 발송 제한은 이메일 기준이라 제3자가 특정 교수의 시간당 요청 한도를 소진시킬 수 있다.
 
 ## 수업·팀·학생 계약 — 구현은 #3/#7
 
