@@ -1,6 +1,6 @@
 /** D1 SQLite schema. Keep schema, SQL migrations and audit/reference triggers in sync. */
 import { sql } from "drizzle-orm";
-import { check, foreignKey, integer, sqliteTable, text, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, foreignKey, index, integer, sqliteTable, text, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const professors = sqliteTable("professors", {
   id: text("id").primaryKey(), email: text("email").notNull().unique(),
@@ -124,4 +124,22 @@ export const jobRecoveries = sqliteTable("job_recoveries", {
 }, table => [primaryKey({ columns: [table.jobKey, table.generation] })]);
 export const queueRejections = sqliteTable("queue_rejections", {
   messageId: text("message_id").primaryKey(), code: text("code").notNull(), recordedAt: integer("recorded_at").notNull(),
+});
+
+/** Professor OTP login (#2). Only SHA-256 hashes of codes and session tokens are stored. */
+export const authChallenges = sqliteTable("auth_challenges", {
+  id: text("id").primaryKey(), email: text("email").notNull(),
+  // NULL for unregistered emails: the row exists only so responses and rate limits look identical.
+  professorId: text("professor_id").references(() => professors.id),
+  codeHash: text("code_hash").notNull(), attempts: integer("attempts").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+}, table => [index("auth_challenges_email_created").on(table.email, table.createdAt)]);
+export const authSessions = sqliteTable("auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  professorId: text("professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
 });
