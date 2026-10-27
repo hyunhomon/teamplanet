@@ -1,0 +1,31 @@
+---
+import ProfessorWorkspace from "../components/ProfessorWorkspace";
+import "../styles/global.css";
+// The SSR document contains a public loading shell only, never account/course data.
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("Referrer-Policy", "same-origin");
+---
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light" />
+    <title>교수 워크스페이스 · TeamPlanet</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">본문으로 이동</a>
+    <div class="workspace-page">
+      <header class="site-header">
+        <a href="/" class="brand-link" aria-label="TeamPlanet 홈"><span class="brand-mark" aria-hidden="true"></span><span>TeamPlanet</span></a>
+        <span class="pill">교수용 워크스페이스</span>
+      </header>
+      <main id="main-content" tabindex="-1">
+        <ProfessorWorkspace client:load />
+        <noscript><p class="form-error">로그인 상태를 확인하려면 브라우저에서 JavaScript를 켜 주세요.</p></noscript>
+      </main>
+      <footer class="site-footer">TeamPlanet · 대화를 이해하는 새로운 시선</footer>
+    </div>
+  </body>
+</html>
