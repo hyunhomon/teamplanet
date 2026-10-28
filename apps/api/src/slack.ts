@@ -17,7 +17,8 @@ export const slackBotScopes = [
 ] as const;
 export type SlackBindings = { SLACK_CLIENT_ID?: string; SLACK_CLIENT_SECRET?: string; SLACK_TOKEN_KEY?: string };
 export type SlackFetch = (url: string, init: RequestInit) => Promise<Response>;
-type Env = { Bindings: ProtectedEnv["Bindings"] & SlackBindings; Variables: ProtectedEnv["Variables"] };
+export type SlackEnv = { Bindings: ProtectedEnv["Bindings"] & SlackBindings; Variables: ProtectedEnv["Variables"] };
+type Env = SlackEnv;
 
 const STATE_TTL_MS = 10 * 60_000;
 // Errors meaning our stored bot token no longer works: the app was uninstalled or the token revoked.
@@ -192,3 +193,39 @@ export function slackRoutes(now: () => number, send: SlackFetch) {
 
   return routes;
 }
+
+export type SlackBot = { workspaceId: string; slackTeamId: string; botUserId: string; token: string };
+/** The live bot of the pilot workspace, or null when Slack is not connected, revoked or the key is missing. */
+export async function slackBot(context: Context<SlackEnv>): Promise<SlackBot | null> {
+  const key = context.env.SLACK_TOKEN_KEY;
+  const row = await context.env.DB.prepare(`SELECT w.id, w.slack_team_id, i.bot_user_id, i.token_ciphertext
+    FROM slack_installations i JOIN workspaces w ON w.id = i.workspace_id WHERE i.token_ciphertext IS NOT NULL`)
+    .first<{ id: string; slack_team_id: string; bot_user_id: string; token_ciphertext: string }>();
+  if (!row || !key) return null;
+  return { workspaceId: row.id, slackTeamId: row.slack_team_id, botUserId: row.bot_user_id, token: await openToken(key, row.id, row.token_ciphertext) };
+}
+
+// Untrusted Slack JSON; route code checks every field it uses.
+export type SlackResult = { ok: true; body: Record<string, any> } | { ok: false; error: string; retryAfter?: number };
+/** One Web API call with the bot token. Throws only on network failure. */
+export async function callSlack(send: SlackFetch, token: string, method: string, params: Record<string, string>): Promise<SlackResult> {
+  const response = await send(`https://slack.com/api/${method}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params).toString(),
+  });
+  const body = await response.json().catch(() => null);
+  if (response.ok && body?.ok === true) return { ok: true, body };
+  const retryAfter = Number(response.headers.get("Retry-After"));
+  return { ok: false, error: response.status === 429 ? "ratelimited" : slackErrorCode(body), ...(retryAfter > 0 ? { retryAfter } : {}) };
+}
+/** Common answer for a Slack failure the route does not handle itself. Never echoes Slack bodies. */
+export function slackFailure(context: Context, method: string, result: { error: string; retryAfter?: number }) {
+  if (result.error === "ratelimited") {
+    return apiError(context, "RATE_LIMITED", "Slack 요청이 많습니다. 잠시 후 다시 시도하세요.", { retryable: true, retryAfterSeconds: result.retryAfter ?? 30 });
+  }
+  console.error("slack.call_failed", method, result.error);
+  if (revokedErrors.has(result.error)) return apiError(context, "SLACK_UNAVAILABLE", "Slack 연결을 다시 확인하세요.");
+  return apiError(context, "SLACK_UNAVAILABLE", "Slack 요청을 처리하지 못했습니다.", { retryable: true });
+}
+export const slackNotConnected = (context: Context) => apiError(context, "SLACK_UNAVAILABLE", "Slack을 먼저 연결하세요.");

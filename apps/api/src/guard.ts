@@ -38,7 +38,9 @@ export function owned<T = Record<string, unknown>>(context: Context<ProtectedEnv
   return context.env.DB.prepare(ownershipSql[kind]).bind(id, context.get("professor").id).first<T>();
 }
 
-export type AuditAction = "course.create" | "team.read" | "slack.install";
+export type AuditAction =
+  | "course.create" | "team.read" | "slack.install"
+  | "student.create" | "team.create" | "team.member_set" | "team.invite";
 export type AuditEvent = { action: AuditAction; targetType: OwnedKind | "workspace"; targetId: string; result: "succeeded" | "denied" };
 
 /** Returns the INSERT so callers can `.run()` it or batch it atomically with the audited write. */
