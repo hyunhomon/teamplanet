@@ -6,8 +6,9 @@ import { apiError } from "./errors";
 
 export type ProtectedEnv = { Bindings: { DB: D1Database }; Variables: { professor: Professor } };
 
-// Paths that authenticate themselves. Slack OAuth callback/events (#6/#11) join here with their own signature/state checks.
-const selfAuthenticated = (path: string) => path === "/v1/health" || path.startsWith("/v1/auth/");
+// Paths that authenticate themselves. The Slack OAuth callback checks its own state; Slack Events (#11) will check signatures.
+const selfAuthenticated = (path: string) =>
+  path === "/v1/health" || path.startsWith("/v1/auth/") || path === "/v1/slack/oauth/callback";
 
 /** Default deny: every other /v1 route needs a live professor session before any handler runs. */
 export function requireSession(now: () => number): MiddlewareHandler<ProtectedEnv> {
@@ -37,8 +38,8 @@ export function owned<T = Record<string, unknown>>(context: Context<ProtectedEnv
   return context.env.DB.prepare(ownershipSql[kind]).bind(id, context.get("professor").id).first<T>();
 }
 
-export type AuditAction = "course.create" | "team.read";
-export type AuditEvent = { action: AuditAction; targetType: OwnedKind; targetId: string; result: "succeeded" | "denied" };
+export type AuditAction = "course.create" | "team.read" | "slack.install";
+export type AuditEvent = { action: AuditAction; targetType: OwnedKind | "workspace"; targetId: string; result: "succeeded" | "denied" };
 
 /** Returns the INSERT so callers can `.run()` it or batch it atomically with the audited write. */
 export function audit(context: Context<ProtectedEnv>, event: AuditEvent, now: () => number): D1PreparedStatement {

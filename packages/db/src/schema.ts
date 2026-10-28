@@ -160,3 +160,23 @@ export const auditEvents = sqliteTable("audit_events", {
   check("audit_events_result", sql`${table.result} IN ('succeeded', 'denied')`),
   index("audit_events_target_lookup").on(table.targetType, table.targetId, table.recordedAt),
 ]);
+
+/** Slack OAuth state (#6): only the hash is stored; single use, short TTL, bound to the session that started the install. */
+export const slackOauthStates = sqliteTable("slack_oauth_states", {
+  stateHash: text("state_hash").primaryKey(),
+  sessionHash: text("session_hash").notNull(),
+  professorId: text("professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+});
+/** Bot installation for the single pilot workspace (#6). The bot token is AES-GCM sealed with the SLACK_TOKEN_KEY secret and cleared on revoke. */
+export const slackInstallations = sqliteTable("slack_installations", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id),
+  teamName: text("team_name").notNull(), appId: text("app_id").notNull(), botUserId: text("bot_user_id").notNull(),
+  scopes: text("scopes").notNull(), tokenCiphertext: text("token_ciphertext"),
+  installedBySlackUserId: text("installed_by_slack_user_id").notNull(),
+  installedByProfessorId: text("installed_by_professor_id").notNull().references(() => professors.id),
+  installedAt: integer("installed_at", { mode: "timestamp_ms" }).notNull(),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+}, table => [check("slack_installations_token_state", sql`(${table.tokenCiphertext} IS NULL) = (${table.revokedAt} IS NOT NULL)`)]);

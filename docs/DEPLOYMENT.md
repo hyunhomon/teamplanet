@@ -122,6 +122,20 @@ bunx wrangler d1 execute DB --remote --command "INSERT INTO professors (id, emai
 
 4. 실제 전달 확인: 등록한 본인 테스트 이메일로 https://teamplanet.cloby.co 에서 OTP를 요청하고 메일 수신, 로그인, `/v1/auth/me` 200, 로그아웃 후 401을 확인합니다. Resend 대시보드의 Emails 기록과 `bunx wrangler tail teamplanet-api`의 `auth.email_delivery_failed` 유무도 확인합니다. 로그에는 OTP·토큰을 남기지 않습니다.
 
-Slack·OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니다. `.dev.vars`, `.env`, 인증 토큰과 학생 데이터는 커밋하지 않습니다. UI의 연결 표시는 실제 API 상태이며, 초기 화면에서 로그인이나 분석이 구현된 것처럼 표시하지 않습니다.
+### Slack 앱(#6)
+
+1. https://api.slack.com/apps → Create New App → From a manifest에서 파일럿 workspace를 고르고 [`apps/api/slack-manifest.json`](../apps/api/slack-manifest.json)을 붙여 넣습니다.
+2. Basic Information의 Client ID·Client Secret과 새 암호화 키를 API Worker secret으로 등록합니다. 키는 한 번 만들고 바꾸지 않습니다. 바꾸면 저장된 토큰을 열 수 없어 재설치가 필요합니다.
+
+```sh
+cd apps/api
+bunx wrangler secret put SLACK_CLIENT_ID
+bunx wrangler secret put SLACK_CLIENT_SECRET
+openssl rand -base64 32 | bunx wrangler secret put SLACK_TOKEN_KEY
+```
+
+3. 설치·권한 확인은 [SLACK_ONBOARDING.md](SLACK_ONBOARDING.md) 1단계를 따릅니다. Slack은 HTTPS redirect만 허용하므로 로컬 `http://127.0.0.1`에서는 실제 설치를 하지 않고 테스트의 OAuth 가짜 응답으로 검증합니다.
+
+OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니다. `.dev.vars`, `.env`, 인증 토큰과 학생 데이터는 커밋하지 않습니다. UI의 연결 표시는 실제 API 상태이며, 초기 화면에서 로그인이나 분석이 구현된 것처럼 표시하지 않습니다.
 
 참고: [Cloudflare GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/), [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Astro Cloudflare 어댑터](https://docs.astro.build/en/guides/integrations-guide/cloudflare/).

@@ -32,8 +32,8 @@ type Env = { Bindings: { DB: D1Database } & MailBindings };
 const COOKIE = "teamplanet_session"; // sent as __Host-teamplanet_session via prefix "host"
 const HOUR_MS = 60 * 60_000;
 
-const encoder = new TextEncoder();
-async function sha256(value: string) {
+export const encoder = new TextEncoder();
+export async function sha256(value: string) {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
   return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -43,11 +43,11 @@ function randomCode() {
   do crypto.getRandomValues(value); while (value[0]! >= 4_294_000_000);
   return String(value[0]! % 1_000_000).padStart(6, "0");
 }
-function randomToken() {
+export function randomToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
-const iso = (ms: number) => new Date(ms).toISOString();
+export const iso = (ms: number) => new Date(ms).toISOString();
 
 
 type SessionRow = { id: string; email: string; created_at: number; expires_at: number };
