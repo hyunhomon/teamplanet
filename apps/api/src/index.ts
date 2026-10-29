@@ -1,31 +1,53 @@
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import type { D1Database, Queue } from "@cloudflare/workers-types";
-import type { ApiError, QueueEnvelope } from "@teamplanet/contracts";
+import type { QueueEnvelope } from "@teamplanet/contracts";
+import { authRoutes, defaultAuthDeps, type AuthDeps } from "./auth";
+import { courseRoutes } from "./courses";
+import { apiError } from "./errors";
+import { requireSession, type ProtectedEnv } from "./guard";
+import { slackRoutes, type SlackBindings, type SlackFetch } from "./slack";
+import { teamRoutes } from "./teams";
+import type { MailBindings } from "./mailer";
 
-export type Bindings = { DB: D1Database; WORK_QUEUE: Queue<QueueEnvelope> };
-export const app = new Hono<{ Bindings: Bindings }>();
+export type Bindings = { DB: D1Database; WORK_QUEUE: Queue<QueueEnvelope> } & MailBindings & SlackBindings;
+const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
-app.use("*", secureHeaders());
-app.use("/v1/*", async (context, next) => {
-  context.header("Cache-Control", "no-store");
-  await next();
-});
+export function createApp(authDeps: AuthDeps = defaultAuthDeps, slackFetch: SlackFetch = (url, init) => fetch(url, init)) {
+  const app = new Hono<{ Bindings: Bindings; Variables: ProtectedEnv["Variables"] }>();
 
-app.get("/v1/health", async context => {
-  try {
-    // Read no student data; also verify the initial schema has been migrated.
-    await context.env.DB.prepare("SELECT 1 FROM assessments LIMIT 0").all();
-    return context.json({ service: "teamplanet-api", status: "ok" });
-  } catch {
-    return context.json({ service: "teamplanet-api", status: "unavailable" }, 503);
-  }
-});
+  app.use("*", secureHeaders());
+  app.use("/v1/*", async (context, next) => {
+    context.header("Cache-Control", "no-store");
+    await next();
+  });
+  // Browser state changes must come from the page's own origin. Slack Events (#11) will need its own exemption.
+  app.use("/v1/*", async (context, next) => {
+    if (!safeMethods.has(context.req.method) && context.req.header("Origin") !== new URL(context.req.url).origin) {
+      return apiError(context, "FORBIDDEN", "허용되지 않은 요청 출처입니다.");
+    }
+    await next();
+  });
 
-const errorBody = (code: "NOT_FOUND" | "INTERNAL_SERVER_ERROR", message: string): ApiError => ({
-  error: { code, message, requestId: `request_${crypto.randomUUID()}`, retryable: false },
-});
-app.notFound(context => context.json(errorBody("NOT_FOUND", "리소스를 찾을 수 없습니다."), 404));
-app.onError((_error, context) => context.json(errorBody("INTERNAL_SERVER_ERROR", "요청을 처리하지 못했습니다."), 500));
+  app.get("/v1/health", async context => {
+    try {
+      // Read no student data; also verify the initial schema has been migrated.
+      await context.env.DB.prepare("SELECT 1 FROM assessments LIMIT 0").all();
+      return context.json({ service: "teamplanet-api", status: "ok" });
+    } catch {
+      return context.json({ service: "teamplanet-api", status: "unavailable" }, 503);
+    }
+  });
+  app.use("/v1/*", requireSession(authDeps.now));
+  app.route("/v1/auth", authRoutes(authDeps));
+  app.route("/v1", courseRoutes(authDeps.now));
+  app.route("/v1", teamRoutes(authDeps.now, slackFetch));
+  app.route("/v1", slackRoutes(authDeps.now, slackFetch));
 
+  app.notFound(context => apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다."));
+  app.onError((_error, context) => apiError(context, "INTERNAL_SERVER_ERROR", "요청을 처리하지 못했습니다."));
+  return app;
+}
+
+export const app = createApp();
 export default app;

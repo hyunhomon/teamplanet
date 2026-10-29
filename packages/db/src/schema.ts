@@ -1,6 +1,6 @@
 /** D1 SQLite schema. Keep schema, SQL migrations and audit/reference triggers in sync. */
 import { sql } from "drizzle-orm";
-import { check, foreignKey, integer, sqliteTable, text, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, foreignKey, index, integer, sqliteTable, text, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const professors = sqliteTable("professors", {
   id: text("id").primaryKey(), email: text("email").notNull().unique(),
@@ -125,3 +125,58 @@ export const jobRecoveries = sqliteTable("job_recoveries", {
 export const queueRejections = sqliteTable("queue_rejections", {
   messageId: text("message_id").primaryKey(), code: text("code").notNull(), recordedAt: integer("recorded_at").notNull(),
 });
+
+/** Professor OTP login (#2). Only SHA-256 hashes of codes and session tokens are stored. */
+export const authChallenges = sqliteTable("auth_challenges", {
+  id: text("id").primaryKey(), email: text("email").notNull(),
+  // NULL for unregistered emails: the row exists only so responses and rate limits look identical.
+  professorId: text("professor_id").references(() => professors.id),
+  codeHash: text("code_hash").notNull(), attempts: integer("attempts").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+}, table => [index("auth_challenges_email_created").on(table.email, table.createdAt)]);
+export const authSessions = sqliteTable("auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  professorId: text("professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+});
+
+/**
+ * Minimal audit trail (#3): who did what to which ID, when, and the outcome.
+ * Columns hold only typed IDs and enums; there is no place for message bodies, OTPs or tokens.
+ */
+export const auditEvents = sqliteTable("audit_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  actorProfessorId: text("actor_professor_id").notNull().references(() => professors.id),
+  action: text("action").notNull(), targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(), result: text("result").notNull(),
+  recordedAt: integer("recorded_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [
+  check("audit_events_action", sql`${table.action} GLOB '[a-z]*.[a-z]*' AND length(${table.action}) <= 64`),
+  check("audit_events_target", sql`${table.targetType} GLOB '[a-z]*' AND length(${table.targetType}) <= 32 AND length(${table.targetId}) BETWEEN 1 AND 100`),
+  check("audit_events_result", sql`${table.result} IN ('succeeded', 'denied')`),
+  index("audit_events_target_lookup").on(table.targetType, table.targetId, table.recordedAt),
+]);
+
+/** Slack OAuth state (#6): only the hash is stored; single use, short TTL, bound to the session that started the install. */
+export const slackOauthStates = sqliteTable("slack_oauth_states", {
+  stateHash: text("state_hash").primaryKey(),
+  sessionHash: text("session_hash").notNull(),
+  professorId: text("professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+});
+/** Bot installation for the single pilot workspace (#6). The bot token is AES-GCM sealed with the SLACK_TOKEN_KEY secret and cleared on revoke. */
+export const slackInstallations = sqliteTable("slack_installations", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id),
+  teamName: text("team_name").notNull(), appId: text("app_id").notNull(), botUserId: text("bot_user_id").notNull(),
+  scopes: text("scopes").notNull(), tokenCiphertext: text("token_ciphertext"),
+  installedBySlackUserId: text("installed_by_slack_user_id").notNull(),
+  installedByProfessorId: text("installed_by_professor_id").notNull().references(() => professors.id),
+  installedAt: integer("installed_at", { mode: "timestamp_ms" }).notNull(),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+}, table => [check("slack_installations_token_state", sql`(${table.tokenCiphertext} IS NULL) = (${table.revokedAt} IS NOT NULL)`)]);
