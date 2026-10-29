@@ -9,6 +9,8 @@ export const professors = sqliteTable("professors", {
 export const courses = sqliteTable("courses", {
   id: text("id").primaryKey(), professorId: text("professor_id").notNull().references(() => professors.id),
   name: text("name").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  // #8 pilot settings: the approved consent form version (consent_policies) and the real course end time.
+  consentVersion: text("consent_version"), endsAt: integer("ends_at", { mode: "timestamp_ms" }),
 });
 
 export const workspaces = sqliteTable("workspaces", {
@@ -180,3 +182,40 @@ export const slackInstallations = sqliteTable("slack_installations", {
   installedAt: integer("installed_at", { mode: "timestamp_ms" }).notNull(),
   revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
 }, table => [check("slack_installations_token_state", sql`(${table.tokenCiphertext} IS NULL) = (${table.revokedAt} IS NOT NULL)`)]);
+
+/**
+ * Consent gate (#8). Operator-approved consent form versions; rows are added only by the operator (D1), never by an API.
+ * A row means the form and its notice (including model transmission, ADR-0003) were confirmed for the pilot.
+ */
+export const consentPolicies = sqliteTable("consent_policies", {
+  version: text("version").primaryKey(),
+  noticeConfirmedAt: integer("notice_confirmed_at", { mode: "timestamp_ms" }).notNull(),
+  approvedBy: text("approved_by").notNull(),
+});
+/** Who recorded each consent_history row and the opaque paper-form reference. consent_history itself stays trigger-written. */
+export const consentEvidence = sqliteTable("consent_evidence", {
+  historyId: integer("history_id").primaryKey().references(() => consentHistory.id),
+  actorProfessorId: text("actor_professor_id").notNull().references(() => professors.id),
+  evidenceRef: text("evidence_ref"),
+});
+/** Student QR re-confirmation. Only the token hash is stored; a confirmation counts only for the grant it was issued after. */
+export const consentConfirmations = sqliteTable("consent_confirmations", {
+  tokenHash: text("token_hash").primaryKey(),
+  teamId: text("team_id").notNull(), studentId: text("student_id").notNull(), version: text("version").notNull(),
+  issuedByProfessorId: text("issued_by_professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+}, table => [index("consent_confirmations_student").on(table.teamId, table.studentId)]);
+/** Allowed collection intervals. Exactly one open window while a team is active; closed windows keep the past intervals. */
+export const collectionWindows = sqliteTable("collection_windows", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  teamId: text("team_id").notNull().references(() => teams.id),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+  endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+  endReason: text("end_reason"),
+}, table => [
+  uniqueIndex("collection_windows_one_open").on(table.teamId).where(sql`${table.endedAt} IS NULL`),
+  index("collection_windows_team").on(table.teamId, table.startedAt),
+  check("collection_windows_end", sql`(${table.endedAt} IS NULL AND ${table.endReason} IS NULL) OR (${table.endedAt} >= ${table.startedAt} AND ${table.endReason} IN ('professor', 'consent_changed', 'policy_changed', 'unknown_participant', 'member_left', 'bot_removed', 'slack_revoked', 'course_ended'))`),
+]);

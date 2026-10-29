@@ -1,6 +1,6 @@
 # API Contract
 
-이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7에서 구현했다. Slack Events·동의 기능은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
+이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7, 동의 gate·활성화는 #8에서 구현했다. Slack Events·History 수집은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
 
@@ -151,15 +151,32 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 
 | Method / Path | 요청 schema | 성공 status / 응답 schema |
 |---|---|---|
-| PUT `/teams/:teamId/consents/:studentId` | `setConsentSchema`: `{status, version}` | 200 / `consentSchema` |
+| GET/PUT `/courses/:courseId/pilot` | PUT `coursePilotSchema`: `{consentVersion, endsAt}` | 200 / `coursePilotResponseSchema` |
+| PUT `/teams/:teamId/consents/:studentId` | `setConsentSchema`: `{status, version, evidenceRef?}` | 200 / `consentSchema` |
 | GET `/teams/:teamId/consents` | body 없음 | 200 / `consentListResponseSchema`: `{consents: Consent[]}` |
+| POST `/teams/:teamId/consents/:studentId/confirmation` | body 없음 | 201 / `consentConfirmationIssueResponseSchema`: `{confirmationUrl, expiresAt}` |
+| POST `/consent-confirmations/lookup` (학생, 세션 없음) | `consentConfirmationLookupSchema`: `{token}` | 200 / `consentConfirmationLookupResponseSchema` |
+| POST `/consent-confirmations/confirm` (학생, 세션 없음) | `consentConfirmSchema`: `{token, confirmed:true}` | 200 / `consentConfirmResponseSchema`: `{confirmedAt}` |
 | POST `/teams/:teamId/activate` | `activateTeamSchema`: `{}` | 200 / `activateTeamResponseSchema`: `{teamId, collectionStatus:"active", activatedAt}` |
+| POST `/teams/:teamId/deactivate` | `deactivateTeamSchema`: `{}` | 200 / `collectionStatusResponseSchema` |
+| GET `/teams/:teamId/collection` | body 없음 | 200 / `collectionStatusResponseSchema`: `{teamId, collectionStatus, windows}` |
 
 `Consent`는 `{teamId, studentId, status, version, recordedAt}`다. 상태는 `pending | granted | declined | withdrawn`이다. 외부 변경 요청은 `granted | declined | withdrawn`만 허용하며 pending으로 덮어쓸 수 없다. 기록이 없는 학생은 미동의로 취급한다. `recordedAt`은 서버 시각이며 클라이언트 주입은 400이다. 응답은 저장된 최신 상태다. 행위자/증빙 참조는 #3/#8 감사 기록에서 연결하며 본문 상태만으로 학생의 동의를 증명하지 않는다.
 
 서버는 교수 소유권, 학생 매핑/멤버십, 승인된 동의서 버전과 증빙을 검증한다. `consents` upsert의 기존 INSERT/UPDATE 트리거가 `consent_history`를 쓴다. 철회는 DELETE가 아닌 상태 갱신이며 이력을 수정하지 않는다. 이력은 `recorded_at`, 동률이면 `id` 순서다.
 
-활성화는 `{}`만 받으며 `consentApproved:true` 같은 우회 플래그를 거부한다. #5 운영 정책 승인, 모든 실제 참가자의 유효한 동의, bot/채널 권한과 멤버십을 서버에서 확인한다. 실패는 `POLICY_NOT_APPROVED`, `CONSENT_REQUIRED`, `CHANNEL_MEMBERSHIP_REQUIRED`/409 또는 `SLACK_UNAVAILABLE`/503이다. 비활성화·허용 구간·가입/철회 경합·상태 상세는 #8에서 확장한다. fixture의 `synthetic-policy-v1`은 승인 정책이 아니며 수집을 허용하지 않는다.
+활성화는 `{}`만 받으며 `consentApproved:true` 같은 우회 플래그를 거부한다. #5 운영 정책 승인, 모든 실제 참가자의 유효한 동의, bot/채널 권한과 멤버십을 서버에서 확인한다. 실패는 `POLICY_NOT_APPROVED`, `CONSENT_REQUIRED`, `CHANNEL_MEMBERSHIP_REQUIRED`/409 또는 `SLACK_UNAVAILABLE`/503이다. fixture의 `synthetic-policy-v1`은 승인 정책이 아니며 수집을 허용하지 않는다.
+
+### 동의 gate 구현 — #8 (`apps/api/src/consents.ts`, `packages/collection`)
+
+- **승인된 동의서 버전:** `consent_policies`에 운영자가 D1로 직접 넣은 버전만 승인된 것이다. 행은 동의서와 모델 전송 고지(ADR-0003)를 확인했다는 뜻이며 API로는 추가할 수 없다. 교수는 `PUT /courses/:courseId/pilot`로 승인된 버전과 실제 수업 종료일(미래)을 정한다. 버전을 바꾸면 그 수업의 활성 팀이 즉시 `policy_changed`로 멈추고, 이전 버전의 동의는 무효다.
+- **유효한 동의(서버 판정):** ① `consents.status = granted`, ② 수업의 현재 버전, ③ 그 grant 이후에 발급된 학생 QR 확인 링크로 학생이 재확인. 셋 중 하나라도 없으면 미동의다. 교수의 `granted` 기록에는 `evidenceRef`(종이 동의서 번호 같은 불투명 참조, 개인정보 금지)가 필요하다.
+- **이력:** `consents` upsert가 기존 트리거로 `consent_history`를 쓴다. 같은 batch에서 `consent_evidence`가 그 이력 행에 기록 교수와 `evidenceRef`를 붙인다. 같은 상태·버전 반복 PUT은 아무것도 쓰지 않아 학생 재확인을 무효로 만들지 않는다. 팀 멤버가 아닌 학생은 404다.
+- **학생 재확인:** `POST …/confirmation`이 학생별 일회용 링크 `/consent/confirm#<token>`을 만든다(7일, 해시만 저장, 새 링크가 이전 미사용 링크를 지움). 토큰은 URL fragment와 요청 본문으로만 오가므로 서버 로그·Referer에 남지 않는다. `/v1/consent-confirmations/*`는 교수 세션 대신 토큰으로 인증하고 Origin 검사는 그대로 받는다. 확인은 그 링크가 발급된 grant가 현재 상태일 때만 된다. 철회 뒤 옛 링크는 404다. 학생 화면은 #29가 만든다. 링크를 가진 사람을 학생 본인으로 보므로 교수가 학생에게 직접 전달해야 한다.
+- **활성화:** 수업 설정(승인 버전·미래 종료일) → #7의 실시간 멤버십 `complete` → 모든 팀 멤버의 유효한 동의 순서로 확인한다. 실패는 `POLICY_NOT_APPROVED`, `CHANNEL_MEMBERSHIP_REQUIRED`, `CONSENT_REQUIRED`/409이고 `team.activate`/`denied` 감사 행이 남는다. 마지막 UPDATE가 같은 조건을 SQL 안에서 다시 검사하므로 확인과 쓰기 사이에 철회가 끼어도 활성화되지 않는다. 이미 활성이면 같은 `activatedAt`을 돌려준다.
+- **허용 구간:** 활성화마다 `collection_windows`에 열린 구간 하나가 생긴다(팀당 열린 구간 1개, 부분 UNIQUE 인덱스). 철회·거절, 버전 변경, 교수 중지(`POST …/deactivate`)는 같은 batch에서 팀을 `paused`로 바꾸고 구간을 닫는다. 닫힌 구간과 `consent_history`로 과거 허용 구간을 재구성한다. 재활성화는 모든 확인을 처음부터 다시 한다.
+- **공통 guard (`@teamplanet/collection`):** `collectionGate(db, {teamId, at, now, slackUserId?})`는 팀 활성·승인 버전·종료일·`at`이 허용 구간 안인지·사용자가 유효 동의를 가진 팀 멤버인지를 확인하고 막힌 이유를 돌려준다. #11 Events와 #12 History는 수신 때와 저장 직전에 이 함수를 다시 부른다. `pauseTeam(db, teamId, reason, at)`은 멈춤 SQL을 돌려주므로 원인 쓰기와 같은 batch로 실행한다. 신규 비동의 멤버·멤버 이탈·봇 제거 이벤트의 자동 멈춤은 #11이 이 함수로 연결한다.
+- **감사:** `course.pilot_set`, `consent.set`, `consent.link_issue`, `team.activate`(성공·거부), `team.deactivate`. 학생 재확인은 `consent_confirmations.confirmed_at`이 기록이다.
 
 ## 오류 envelope
 
