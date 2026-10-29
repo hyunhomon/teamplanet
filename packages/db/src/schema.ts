@@ -1,6 +1,6 @@
 /** D1 SQLite schema. Keep schema, SQL migrations and audit/reference triggers in sync. */
 import { sql } from "drizzle-orm";
-import { check, foreignKey, integer, sqliteTable, text, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, foreignKey, index, integer, sqliteTable, text, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const professors = sqliteTable("professors", {
   id: text("id").primaryKey(), email: text("email").notNull().unique(),
@@ -9,6 +9,8 @@ export const professors = sqliteTable("professors", {
 export const courses = sqliteTable("courses", {
   id: text("id").primaryKey(), professorId: text("professor_id").notNull().references(() => professors.id),
   name: text("name").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  // #8 pilot settings: the approved consent form version (consent_policies) and the real course end time.
+  consentVersion: text("consent_version"), endsAt: integer("ends_at", { mode: "timestamp_ms" }),
 });
 
 export const workspaces = sqliteTable("workspaces", {
@@ -125,3 +127,129 @@ export const jobRecoveries = sqliteTable("job_recoveries", {
 export const queueRejections = sqliteTable("queue_rejections", {
   messageId: text("message_id").primaryKey(), code: text("code").notNull(), recordedAt: integer("recorded_at").notNull(),
 });
+
+/** Professor OTP login (#2). Only SHA-256 hashes of codes and session tokens are stored. */
+export const authChallenges = sqliteTable("auth_challenges", {
+  id: text("id").primaryKey(), email: text("email").notNull(),
+  // NULL for unregistered emails: the row exists only so responses and rate limits look identical.
+  professorId: text("professor_id").references(() => professors.id),
+  codeHash: text("code_hash").notNull(), attempts: integer("attempts").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+}, table => [index("auth_challenges_email_created").on(table.email, table.createdAt)]);
+export const authSessions = sqliteTable("auth_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  professorId: text("professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+});
+
+/**
+ * Minimal audit trail (#3): who did what to which ID, when, and the outcome.
+ * Columns hold only typed IDs and enums; there is no place for message bodies, OTPs or tokens.
+ */
+export const auditEvents = sqliteTable("audit_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  actorProfessorId: text("actor_professor_id").notNull().references(() => professors.id),
+  action: text("action").notNull(), targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(), result: text("result").notNull(),
+  recordedAt: integer("recorded_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [
+  check("audit_events_action", sql`${table.action} GLOB '[a-z]*.[a-z]*' AND length(${table.action}) <= 64`),
+  check("audit_events_target", sql`${table.targetType} GLOB '[a-z]*' AND length(${table.targetType}) <= 32 AND length(${table.targetId}) BETWEEN 1 AND 100`),
+  check("audit_events_result", sql`${table.result} IN ('succeeded', 'denied')`),
+  index("audit_events_target_lookup").on(table.targetType, table.targetId, table.recordedAt),
+]);
+
+/** Slack OAuth state (#6): only the hash is stored; single use, short TTL, bound to the session that started the install. */
+export const slackOauthStates = sqliteTable("slack_oauth_states", {
+  stateHash: text("state_hash").primaryKey(),
+  sessionHash: text("session_hash").notNull(),
+  professorId: text("professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+});
+/** Bot installation for the single pilot workspace (#6). The bot token is AES-GCM sealed with the SLACK_TOKEN_KEY secret and cleared on revoke. */
+export const slackInstallations = sqliteTable("slack_installations", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id),
+  teamName: text("team_name").notNull(), appId: text("app_id").notNull(), botUserId: text("bot_user_id").notNull(),
+  scopes: text("scopes").notNull(), tokenCiphertext: text("token_ciphertext"),
+  installedBySlackUserId: text("installed_by_slack_user_id").notNull(),
+  installedByProfessorId: text("installed_by_professor_id").notNull().references(() => professors.id),
+  installedAt: integer("installed_at", { mode: "timestamp_ms" }).notNull(),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+}, table => [check("slack_installations_token_state", sql`(${table.tokenCiphertext} IS NULL) = (${table.revokedAt} IS NOT NULL)`)]);
+
+/**
+ * Consent gate (#8). Operator-approved consent form versions; rows are added only by the operator (D1), never by an API.
+ * A row means the form and its notice (including model transmission, ADR-0003) were confirmed for the pilot.
+ */
+export const consentPolicies = sqliteTable("consent_policies", {
+  version: text("version").primaryKey(),
+  noticeConfirmedAt: integer("notice_confirmed_at", { mode: "timestamp_ms" }).notNull(),
+  approvedBy: text("approved_by").notNull(),
+});
+/** Who recorded each consent_history row and the opaque paper-form reference. consent_history itself stays trigger-written. */
+export const consentEvidence = sqliteTable("consent_evidence", {
+  historyId: integer("history_id").primaryKey().references(() => consentHistory.id),
+  actorProfessorId: text("actor_professor_id").notNull().references(() => professors.id),
+  evidenceRef: text("evidence_ref"),
+});
+/** Student QR re-confirmation. Only the token hash is stored; a confirmation counts only for the grant it was issued after. */
+export const consentConfirmations = sqliteTable("consent_confirmations", {
+  tokenHash: text("token_hash").primaryKey(),
+  teamId: text("team_id").notNull(), studentId: text("student_id").notNull(), version: text("version").notNull(),
+  issuedByProfessorId: text("issued_by_professor_id").notNull().references(() => professors.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+}, table => [index("consent_confirmations_student").on(table.teamId, table.studentId)]);
+/** Allowed collection intervals. Exactly one open window while a team is active; closed windows keep the past intervals. */
+export const collectionWindows = sqliteTable("collection_windows", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  teamId: text("team_id").notNull().references(() => teams.id),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+  endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+  endReason: text("end_reason"),
+}, table => [
+  uniqueIndex("collection_windows_one_open").on(table.teamId).where(sql`${table.endedAt} IS NULL`),
+  index("collection_windows_team").on(table.teamId, table.startedAt),
+  check("collection_windows_end", sql`(${table.endedAt} IS NULL AND ${table.endReason} IS NULL) OR (${table.endedAt} >= ${table.startedAt} AND ${table.endReason} IN ('professor', 'consent_changed', 'policy_changed', 'unknown_participant', 'member_left', 'bot_removed', 'slack_revoked', 'course_ended'))`),
+]);
+
+/**
+ * Slack Events intake ledger (#11): dedupe by event_id plus processing outcome. Metadata only — never text or payloads.
+ * Ignored events keep no channel/user/ts so DMs and out-of-scope traffic leave nothing but the id and the reason.
+ */
+export const slackEventRefs = sqliteTable("slack_event_refs", {
+  eventRef: text("event_ref").primaryKey(), workspaceId: text("workspace_id").notNull(), eventId: text("event_id").notNull().unique(),
+  kind: text("kind").notNull(), teamId: text("team_id"), channelId: text("channel_id"), slackTs: text("slack_ts"),
+  threadTs: text("thread_ts"), userId: text("user_id"), revision: text("revision"), contentHash: text("content_hash"),
+  outcome: text("outcome").notNull(), receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull(),
+  processedAt: integer("processed_at", { mode: "timestamp_ms" }),
+}, table => [
+  check("slack_event_refs_kind", sql`${table.kind} IN ('message', 'message_changed', 'message_deleted', 'member_joined', 'member_left', 'revoked', 'ignored')`),
+  index("slack_event_refs_outcome").on(table.outcome, table.receivedAt),
+]);
+/**
+ * Message references (#11/#12): Slack stays the source of text. One row per channel + Slack ts, with the latest
+ * revision, a SHA-256 content fingerprint and a tombstone that later creates/edits can never undo.
+ */
+export const messageRefs = sqliteTable("message_refs", {
+  channelId: text("channel_id").notNull(), slackTs: text("slack_ts").notNull(),
+  teamId: text("team_id").notNull().references(() => teams.id), userId: text("user_id"), threadTs: text("thread_ts"),
+  revision: text("revision").notNull(), contentHash: text("content_hash"),
+  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }), source: text("source").notNull(),
+  firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+}, table => [
+  primaryKey({ columns: [table.channelId, table.slackTs] }),
+  index("message_refs_team_ts").on(table.teamId, table.slackTs),
+  index("message_refs_thread").on(table.channelId, table.threadTs),
+  check("message_refs_source", sql`${table.source} IN ('event', 'history')`),
+  check("message_refs_tombstone", sql`${table.deletedAt} IS NULL OR ${table.contentHash} IS NULL`),
+]);

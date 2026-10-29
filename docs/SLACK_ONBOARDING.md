@@ -10,9 +10,19 @@
 
 Slack OAuth로 앱 설치. bot/user scope는 기능별 최소권한 기준으로 실제 Slack 공식 문서를 확인해 선정한다. `team_id`, 설치 사용자, bot token, 설치 시각 기록.
 
+#6 구현: bot scope 6개(user scope 없음)와 상태 값은 [API_CONTRACT.md](API_CONTRACT.md)의 "Slack 설치·연결", 앱 생성·secret은 [DEPLOYMENT.md](DEPLOYMENT.md)의 "Slack 앱"을 따른다. 실험 workspace 연결 확인 절차:
+
+1. Slack 관리 권한이 있는 담당자와 함께 교수 계정으로 로그인하고 `/v1/slack/install`로 이동한다. Slack 동의 화면에서 workspace 이름과 권한 목록을 확인하고 허용한다.
+2. `/workspace?slack=installed`(재설치면 `reinstalled`)로 돌아오는지 확인한다. 다른 값이면 원인을 해결한다. `workspace_mismatch`는 이미 다른 workspace가 연결된 상태라 자동 교체하지 않는다.
+3. `GET /v1/slack/connection`이 `connected`, 올바른 workspace 이름, 빈 `missingScopes`를 반환하는지 확인한다. 응답에 `xoxb-` 토큰이 없어야 한다.
+4. bot membership: 시험용 공개 채널에서 `/invite @TeamPlanet`을 실행하고 채널 정보의 통합(Integrations)에 앱이 보이는지 확인한다. API로 채널 멤버십을 확인하는 기능은 #7에서 추가한다. 이 단계에서 메시지 조회나 백필을 하지 않는다.
+5. 철회 확인: Slack 앱 관리에서 앱을 제거한 뒤 `connection`이 `revoked`가 되는지, 다시 설치하면 `connected`로 돌아오는지 확인한다.
+
 ## 2. 공식 채널 템플릿
 
 교수가 팀 이름을 넣으면 `teamplanet-{class}-{team}` 채널을 생성하거나, 기존 채널을 공식 프로젝트 채널로 지정한다. 봇을 채널에 초대하고 읽기 권한을 검증한다.
+
+#7 구현: `POST /v1/teams`가 채널 생성·지정과 봇 참여를 하고, `GET /v1/teams/:teamId/membership`이 봇·학생의 채널 멤버십을 Slack에서 직접 확인한다. 규칙은 [API_CONTRACT.md](API_CONTRACT.md)의 "채널·멤버 구현"을 따른다.
 
 ## 3. 참가자 초대와 고지
 
@@ -30,7 +40,7 @@ QR 진입 시 수업 초대/학생 본인을 확인하고 Slack 계정 매핑은
 
 오프라인 확인·학생 QR 재확인·실제 참가자·수업 종료일·모델 전송 고지·bot 권한 검증 후 `active`로 변경한다. 활성화 이후 허용 구간만 처리하며 동의 전/비활성 구간은 백필하지 않는다. 과거 스레드도 허용 구간 밖 원문을 끌어오지 않고 문맥 부족을 표시한다.
 
-Events로 변경/삭제 metadata를 보정하고 분석 시 History/Replies로 기간 전체를 재조회한다. 원문/이미지는 실행 중 메모리에서만 처리하고 DB/Queue/로그에는 링크·참조·지문·요약을 남긴다. 원문이 없는 부분을 복원했다고 주장하지 않는다.
+Events로 변경/삭제 metadata를 보정하고(#11, 서명 검증·중복 제거·참조만 저장) 분석 시 History/Replies로 기간 전체를 재조회한다. 원문/이미지는 실행 중 메모리에서만 처리하고 DB/Queue/로그에는 링크·참조·지문·요약을 남긴다. 원문이 없는 부분을 복원했다고 주장하지 않는다.
 
 ## 6. 교수 분석 실행
 

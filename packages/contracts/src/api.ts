@@ -53,8 +53,9 @@ export const sessionResponseSchema = z.strictObject({ professor: professorSchema
 export const logoutResponseSchema = z.strictObject({ loggedOut: z.literal(true) });
 export const createCourseSchema = z.strictObject({ name: nameSchema });
 export const createStudentSchema = z.strictObject({ displayName: nameSchema });
+// #7: with channelId the server adopts that existing public channel; without it, it creates `teamplanet-{course}-{team}`.
 export const createTeamSchema = z.strictObject({
-  courseId: courseIdSchema, workspaceId: workspaceIdSchema, channelId: slackChannelIdSchema, name: nameSchema,
+  courseId: courseIdSchema, workspaceId: workspaceIdSchema, channelId: slackChannelIdSchema.optional(), name: nameSchema,
 });
 export const setTeamMemberSchema = z.strictObject({
   workspaceId: workspaceIdSchema, slackUserId: slackUserIdSchema,
@@ -65,22 +66,68 @@ export const inviteTeamResponseSchema = z.strictObject({
   status: z.enum(["invited", "already_member", "manual_invite_required"]),
 });
 export const consentStatusSchema = z.enum(["pending", "granted", "declined", "withdrawn"]);
+// #8: evidenceRef is an opaque paper-form reference (no personal data), required by the server for `granted`.
 export const setConsentSchema = z.strictObject({
   status: z.enum(["granted", "declined", "withdrawn"]), version: versionSchema,
+  evidenceRef: z.string().trim().min(1).max(100).optional(),
 });
 export const consentSchema = z.strictObject({
   teamId: teamIdSchema, studentId: studentIdSchema, status: consentStatusSchema,
   version: versionSchema, recordedAt: dateTimeSchema,
+  // #8: when the student re-confirmed this grant through their QR link; null until then.
+  studentConfirmedAt: dateTimeSchema.nullable().optional(),
 });
+// #8 course pilot settings. The version must be operator-approved (consent_policies) before consents or activation.
+export const coursePilotSchema = z.strictObject({ consentVersion: versionSchema, endsAt: dateTimeSchema });
+export const coursePilotResponseSchema = z.strictObject({
+  courseId: courseIdSchema, consentVersion: versionSchema.nullable(), endsAt: dateTimeSchema.nullable(), policyApproved: z.boolean(),
+});
+// #8 student QR re-confirmation (#29 builds the page). The token travels in the URL fragment and request bodies only.
+export const consentTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const consentConfirmationIssueResponseSchema = z.strictObject({ confirmationUrl: z.url(), expiresAt: dateTimeSchema });
+export const consentConfirmationLookupSchema = z.strictObject({ token: consentTokenSchema });
+export const consentConfirmationLookupResponseSchema = z.strictObject({
+  courseName: nameSchema, teamName: nameSchema, studentDisplayName: nameSchema, version: versionSchema,
+  expiresAt: dateTimeSchema, confirmedAt: dateTimeSchema.nullable(),
+});
+export const consentConfirmSchema = z.strictObject({ token: consentTokenSchema, confirmed: z.literal(true) });
+export const consentConfirmResponseSchema = z.strictObject({ confirmedAt: dateTimeSchema });
 export const activateTeamSchema = z.strictObject({});
 export const activateTeamResponseSchema = z.strictObject({
   teamId: teamIdSchema, collectionStatus: z.literal("active"), activatedAt: dateTimeSchema,
+});
+export const deactivateTeamSchema = z.strictObject({});
+export const collectionEndReasonSchema = z.enum([
+  "professor", "consent_changed", "policy_changed", "unknown_participant", "member_left", "bot_removed", "slack_revoked", "course_ended",
+]);
+export const collectionStatusResponseSchema = z.strictObject({
+  teamId: teamIdSchema, collectionStatus: collectionStatusSchema,
+  windows: z.array(z.strictObject({ startedAt: dateTimeSchema, endedAt: dateTimeSchema.nullable(), endReason: collectionEndReasonSchema.nullable() })),
 });
 export const courseListResponseSchema = z.strictObject({ courses: z.array(courseSchema) });
 export const teamListResponseSchema = z.strictObject({ teams: z.array(teamSchema) });
 export const studentListResponseSchema = z.strictObject({ students: z.array(studentSchema) });
 export const teamMemberListResponseSchema = z.strictObject({ members: z.array(teamMemberSchema) });
 export const consentListResponseSchema = z.strictObject({ consents: z.array(consentSchema) });
+// #6: what a professor needs to see about the pilot workspace. Never carries tokens or Slack secrets.
+export const slackConnectionSchema = z.strictObject({
+  status: z.enum(["not_connected", "connected", "insufficient_scope", "revoked"]),
+  workspace: z.strictObject({
+    id: workspaceIdSchema, slackTeamId: slackTeamIdSchema, name: nameSchema, installedAt: dateTimeSchema,
+  }).nullable(),
+  missingScopes: z.array(z.string()),
+});
+// Result the OAuth callback appends to its redirect back to the web app: `/workspace?slack=<outcome>`.
+export const slackInstallOutcomeSchema = z.enum([
+  "installed", "reinstalled", "insufficient_scope", "cancelled", "invalid_state", "workspace_mismatch", "failed",
+]);
+// #7: live channel membership. `complete` is necessary, not sufficient, for activation (#8 adds consent/policy checks).
+export const teamMembershipSchema = z.strictObject({
+  teamId: teamIdSchema, checkedAt: dateTimeSchema, botInChannel: z.boolean(),
+  members: z.array(z.strictObject({ studentId: studentIdSchema, slackUserId: slackUserIdSchema, inChannel: z.boolean() })),
+  unmappedChannelMembers: z.array(slackUserIdSchema),
+  complete: z.boolean(),
+});
 export const teamParamsSchema = z.strictObject({ teamId: teamIdSchema });
 export const courseParamsSchema = z.strictObject({ courseId: courseIdSchema });
 export const teamStudentParamsSchema = z.strictObject({ teamId: teamIdSchema, studentId: studentIdSchema });
@@ -125,6 +172,13 @@ export type TeamListResponse = z.infer<typeof teamListResponseSchema>;
 export type StudentListResponse = z.infer<typeof studentListResponseSchema>;
 export type TeamMemberListResponse = z.infer<typeof teamMemberListResponseSchema>;
 export type ConsentListResponse = z.infer<typeof consentListResponseSchema>;
+export type SlackConnection = z.infer<typeof slackConnectionSchema>;
+export type SlackInstallOutcome = z.infer<typeof slackInstallOutcomeSchema>;
+export type TeamMembership = z.infer<typeof teamMembershipSchema>;
+export type CoursePilot = z.infer<typeof coursePilotSchema>;
+export type CoursePilotResponse = z.infer<typeof coursePilotResponseSchema>;
+export type ConsentConfirmationLookupResponse = z.infer<typeof consentConfirmationLookupResponseSchema>;
+export type CollectionStatusResponse = z.infer<typeof collectionStatusResponseSchema>;
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type ApiErrorCode = ApiError["error"]["code"];
 
