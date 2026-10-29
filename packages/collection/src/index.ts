@@ -56,3 +56,5 @@ export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at:
     db.prepare("UPDATE teams SET collection_status = 'paused' WHERE id = ? AND collection_status = 'active'").bind(teamId),
   ];
 }
+
+export * from "./events";

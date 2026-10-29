@@ -6,10 +6,11 @@ import { apiError } from "./errors";
 
 export type ProtectedEnv = { Bindings: { DB: D1Database }; Variables: { professor: Professor } };
 
-// Paths that authenticate themselves. The Slack OAuth callback checks its own state; Slack Events (#11) will check signatures.
+// Paths that authenticate themselves. The Slack OAuth callback checks its own state; Slack Events check request signatures.
 // Student QR confirmation (#8) authenticates with its personal one-time token instead of a professor session.
 const selfAuthenticated = (path: string) =>
-  path === "/v1/health" || path.startsWith("/v1/auth/") || path === "/v1/slack/oauth/callback" || path.startsWith("/v1/consent-confirmations/");
+  path === "/v1/health" || path.startsWith("/v1/auth/") || path === "/v1/slack/oauth/callback" || path.startsWith("/v1/consent-confirmations/")
+  || path === "/v1/slack/events"; // #11: Slack request signature instead of a session
 
 /** Default deny: every other /v1 route needs a live professor session before any handler runs. */
 export function requireSession(now: () => number): MiddlewareHandler<ProtectedEnv> {

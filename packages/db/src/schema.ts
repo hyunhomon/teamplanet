@@ -219,3 +219,37 @@ export const collectionWindows = sqliteTable("collection_windows", {
   index("collection_windows_team").on(table.teamId, table.startedAt),
   check("collection_windows_end", sql`(${table.endedAt} IS NULL AND ${table.endReason} IS NULL) OR (${table.endedAt} >= ${table.startedAt} AND ${table.endReason} IN ('professor', 'consent_changed', 'policy_changed', 'unknown_participant', 'member_left', 'bot_removed', 'slack_revoked', 'course_ended'))`),
 ]);
+
+/**
+ * Slack Events intake ledger (#11): dedupe by event_id plus processing outcome. Metadata only — never text or payloads.
+ * Ignored events keep no channel/user/ts so DMs and out-of-scope traffic leave nothing but the id and the reason.
+ */
+export const slackEventRefs = sqliteTable("slack_event_refs", {
+  eventRef: text("event_ref").primaryKey(), workspaceId: text("workspace_id").notNull(), eventId: text("event_id").notNull().unique(),
+  kind: text("kind").notNull(), teamId: text("team_id"), channelId: text("channel_id"), slackTs: text("slack_ts"),
+  threadTs: text("thread_ts"), userId: text("user_id"), revision: text("revision"), contentHash: text("content_hash"),
+  outcome: text("outcome").notNull(), receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull(),
+  processedAt: integer("processed_at", { mode: "timestamp_ms" }),
+}, table => [
+  check("slack_event_refs_kind", sql`${table.kind} IN ('message', 'message_changed', 'message_deleted', 'member_joined', 'member_left', 'revoked', 'ignored')`),
+  index("slack_event_refs_outcome").on(table.outcome, table.receivedAt),
+]);
+/**
+ * Message references (#11/#12): Slack stays the source of text. One row per channel + Slack ts, with the latest
+ * revision, a SHA-256 content fingerprint and a tombstone that later creates/edits can never undo.
+ */
+export const messageRefs = sqliteTable("message_refs", {
+  channelId: text("channel_id").notNull(), slackTs: text("slack_ts").notNull(),
+  teamId: text("team_id").notNull().references(() => teams.id), userId: text("user_id"), threadTs: text("thread_ts"),
+  revision: text("revision").notNull(), contentHash: text("content_hash"),
+  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }), source: text("source").notNull(),
+  firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+}, table => [
+  primaryKey({ columns: [table.channelId, table.slackTs] }),
+  index("message_refs_team_ts").on(table.teamId, table.slackTs),
+  index("message_refs_thread").on(table.channelId, table.threadTs),
+  check("message_refs_source", sql`${table.source} IN ('event', 'history')`),
+  check("message_refs_tombstone", sql`${table.deletedAt} IS NULL OR ${table.contentHash} IS NULL`),
+]);
