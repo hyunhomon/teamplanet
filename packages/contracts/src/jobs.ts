@@ -10,6 +10,11 @@ export const queueJobSchema = z.discriminatedUnion("kind", [
     eventId: z.string().regex(/^Ev[A-Z0-9]{6,}$/),
     eventRef: resourceId("event"),
   }),
+  // #12: re-read one team's allowed Slack history in [fromMs, toMs); the handler rejects fromMs >= toMs.
+  z.strictObject({
+    kind: z.literal("slack.history"), requestId: uuid, teamId: resourceId("team"),
+    fromMs: z.number().int().nonnegative(), toMs: z.number().int().positive(),
+  }),
   z.strictObject({
     kind: z.literal("analysis.stage"), runId: resourceId("run"),
     stage: z.enum(["collecting", "evidence_extraction", "assessment", "review"]),
@@ -29,6 +34,7 @@ export function jobKey(job: QueueJob): string {
   switch (job.kind) {
     case "system.probe": return `probe:${job.probeId}`;
     case "slack.event": return `event:${job.workspaceId}:${job.eventId}`;
+    case "slack.history": return `history:${job.teamId}:${job.requestId}`;
     case "analysis.stage": return `run:${job.runId}:${job.stage}:${job.chunkId}`;
   }
 }

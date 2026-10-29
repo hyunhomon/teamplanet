@@ -12,6 +12,7 @@
     "db:migrate": "wrangler d1 migrations apply DB --remote"
   },
   "dependencies": {
+    "@teamplanet/collection": "workspace:*",
     "@teamplanet/queue": "workspace:*",
     "@teamplanet/contracts": "workspace:*",
     "@teamplanet/db": "workspace:*",
