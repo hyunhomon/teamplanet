@@ -58,3 +58,5 @@ export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at:
 }
 
 export * from "./events";
+export * from "./slack";
+export * from "./history";

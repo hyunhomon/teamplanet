@@ -142,6 +142,8 @@ bunx wrangler secret put SLACK_CLIENT_ID
 bunx wrangler secret put SLACK_CLIENT_SECRET
 openssl rand -base64 32 | bunx wrangler secret put SLACK_TOKEN_KEY
 bunx wrangler secret put SLACK_SIGNING_SECRET   # Basic Information → Signing Secret (#11 Events)
+cd ../consumer
+bunx wrangler secret put SLACK_TOKEN_KEY   # API와 같은 값 (#12 History 보정이 bot token을 연다)
 ```
 
 3. 설치·권한 확인은 [SLACK_ONBOARDING.md](SLACK_ONBOARDING.md) 1단계를 따릅니다. Slack은 HTTPS redirect만 허용하므로 로컬 `http://127.0.0.1`에서는 실제 설치를 하지 않고 테스트의 OAuth 가짜 응답으로 검증합니다.

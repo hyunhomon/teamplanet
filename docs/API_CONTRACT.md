@@ -1,6 +1,6 @@
 # API Contract
 
-이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7, 동의 gate·활성화는 #8, Slack Events 수신은 #11에서 구현했다. History 보정은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
+이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7, 동의 gate·활성화는 #8, Slack Events 수신은 #11, History·Replies 보정(Queue job)은 #12에서 구현했다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
 
@@ -266,6 +266,18 @@ POST `/v1/slack/events`는 교수 세션·Origin 검사 대신 Slack 서명으�
 ```
 
 `kind`는 `insufficient_credits | key_limit_exhausted | in_flight_budget | unspecified_provider_billing`이다. provider가 명시적 지연을 제공한 in-flight budget만 일시적 재시도가 가능하다. 일반 잔액 부족 402 자동 재시도·앱 비용 상한·모델 자동 폴백을 추가하지 않는다. #5 서비스 정책은 아래 인수인계를 따르며 루브릭·모델/전송 결정은 ADR-0003을 따르며 실제 외부 전송 고지와 Slack scope(#6)는 시작 전 확인 대상이다.
+
+## History·Replies 보정 — #12 (`packages/collection/src/history.ts`)
+
+HTTP API는 없다. 분석(#16)이 `slack.history` job(`{requestId, teamId, fromMs, toMs}`, key `history:<teamId>:<requestId>`)을 넣고 결과를 `collection_coverage`(request_id 기준)에서 읽는다. Consumer가 실행하며 API와 같은 `SLACK_TOKEN_KEY`로 bot token을 연다.
+
+- **확인한 Slack 조건(2026-10-28, docs.slack.dev):** `conversations.history`·`conversations.replies`는 bot `channels:history`(공개 채널), Tier 3(분당 50회 이상). 2025-05-29 비 Marketplace 상용 앱 제한(분당 1회·15개)은 내부 custom app에 적용되지 않는다. 이 앱을 다른 조직에 배포하면 적용되므로 그때 다시 확인한다. 페이지는 200개, cursor 기반이다.
+- **범위:** 팀의 허용 구간(`collection_windows`)과 요청 `[fromMs, toMs)`의 교집합만 읽는다. Slack에는 `oldest`/`latest`를 inclusive로 보내고 `start ≤ ts < end`인 메시지만 남긴다. Slack ts `s.micro`는 ms로 내림해 비교하며 같은 ts의 구간 시작은 포함, 끝은 제외다. 활성화 전 시각은 Slack에 묻지도 않는다. 요청 범위에 허용 구간 밖 시간이 있으면 `partial` + `outside_allowed_window`다.
+- **gate:** 페이지마다 팀 단위 `collectionGate`, 메시지마다 작성자 동의를 확인한다. 동의 없는 작성자·봇·시스템 메시지는 저장하지 않고 `excluded` + `unconsented_author_excluded`로 남긴다. 팀이 멈추면 `failed`/`team_inactive`로 끝낸다.
+- **스레드:** 구간 안 루트(`reply_count > 0`)는 replies를 끝까지 읽는다. 구간보다 먼저 시작한 스레드는 Events로 알려진 루트만 replies를 읽고, 루트 자체는 가져오지 않는다(`thread_root_outside_window`). Events로도 모르는 오래된 스레드의 새 답글은 놓칠 수 있어 모든 coverage에 `older_thread_replies_from_events_only`를 붙인다.
+- **병합:** #11과 같은 `mergeMessage`라 중복 없이 더 새로운 revision만 반영하고 tombstone은 되살아나지 않는다. 본문은 지문 계산 중에만 메모리에 있다. 실행 시작 시각을 `verified_at`으로 찍고, 구간을 끝까지 읽은 뒤 실행 전에 있던 참조 중 Slack에 없는 것을 삭제(tombstone)로 보정한다(`tombstoned`). 동의가 없어 저장하지 않은 메시지도 "본 것"으로 찍어 삭제로 오인하지 않는다.
+- **재개:** 페이지마다 cursor를 job checkpoint(`h<구간>p<페이지>`)에 병합 쓰기와 같은 트랜잭션으로 저장한다. 중단·재시도 시 마지막 cursor부터 이어서 읽는다. 429는 Slack `Retry-After`로 job을 재시도하고, 네트워크·일시 오류도 재시도한다.
+- **실패는 데이터 없음이 아니다:** `missing_scope`, `not_in_channel`, `channel_not_found`, 토큰 철회 등은 `failed`/`<오류 코드>`로 끝난다. 재시도가 바닥나 job이 dead가 되면 coverage는 `running`으로 남는다. 분석은 `complete`만 전체 수집으로 보고 `running`·`partial`·`failed`는 한계로 표시해야 한다.
 
 ## #5 파일럿 정책 인수인계 — 후속 API 확장
 

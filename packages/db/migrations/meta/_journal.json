@@ -64,6 +64,13 @@
       "when": 1793240423474,
       "tag": "0008_brainy_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793240945602,
+      "tag": "0009_right_ironclad",
+      "breakpoints": true
     }
   ]
 }

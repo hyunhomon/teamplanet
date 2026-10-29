@@ -253,3 +253,21 @@ export const messageRefs = sqliteTable("message_refs", {
   check("message_refs_source", sql`${table.source} IN ('event', 'history')`),
   check("message_refs_tombstone", sql`${table.deletedAt} IS NULL OR ${table.contentHash} IS NULL`),
 ]);
+
+/**
+ * History/Replies recovery coverage (#12), read by analysis (#16). One row per recovery request for a team's [from, to).
+ * `complete` only when every allowed interval was fully paged; limitations name what was outside or excluded.
+ */
+export const collectionCoverage = sqliteTable("collection_coverage", {
+  requestId: text("request_id").primaryKey(), teamId: text("team_id").notNull().references(() => teams.id),
+  fromMs: integer("from_ms").notNull(), toMs: integer("to_ms").notNull(),
+  status: text("status").notNull(), reason: text("reason"),
+  merged: integer("merged").notNull().default(0), excluded: integer("excluded").notNull().default(0),
+  tombstoned: integer("tombstoned").notNull().default(0), oldThreadRoots: integer("old_thread_roots").notNull().default(0),
+  limitationsJson: text("limitations_json").notNull().default("[]"),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [
+  index("collection_coverage_team").on(table.teamId, table.fromMs, table.toMs),
+  check("collection_coverage_status", sql`${table.status} IN ('running', 'complete', 'partial', 'failed')`),
+]);

@@ -2,9 +2,13 @@ import { Hono, type Context } from "hono";
 import {
   slackTeamIdSchema, slackUserIdSchema, type SlackConnection, type SlackInstallOutcome,
 } from "@teamplanet/contracts";
-import { encoder, iso, randomToken, sessionProfessor, sessionToken, sha256 } from "./auth";
+import { callSlack, openToken, sealToken, slackErrorCode, type SlackFetch, type SlackResult } from "@teamplanet/collection";
+import { iso, randomToken, sessionProfessor, sessionToken, sha256 } from "./auth";
 import { apiError } from "./errors";
 import { audit, type ProtectedEnv } from "./guard";
+
+// Moved to @teamplanet/collection for the consumer (#12); re-exported for existing API imports.
+export { callSlack, openToken, sealToken, type SlackFetch, type SlackResult };
 
 /**
  * Bot scopes checked against docs.slack.dev on 2026-10-28, public channels only:
@@ -16,7 +20,6 @@ export const slackBotScopes = [
   "channels:history", "channels:join", "channels:manage", "channels:read", "files:read", "users:read",
 ] as const;
 export type SlackBindings = { SLACK_CLIENT_ID?: string; SLACK_CLIENT_SECRET?: string; SLACK_TOKEN_KEY?: string };
-export type SlackFetch = (url: string, init: RequestInit) => Promise<Response>;
 export type SlackEnv = { Bindings: ProtectedEnv["Bindings"] & SlackBindings; Variables: ProtectedEnv["Variables"] };
 type Env = SlackEnv;
 
@@ -24,38 +27,10 @@ const STATE_TTL_MS = 10 * 60_000;
 // Errors meaning our stored bot token no longer works: the app was uninstalled or the token revoked.
 const revokedErrors = new Set(["token_revoked", "invalid_auth", "account_inactive", "token_expired", "not_authed"]);
 
-const toBase64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
-const fromBase64 = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0));
-async function tokenKey(secret: string) {
-  const raw = fromBase64(secret);
-  if (raw.length !== 32) throw new Error("SLACK_TOKEN_KEY_INVALID");
-  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
-}
-/** AES-GCM with the workspace ID as associated data, so a sealed token only opens for its own row. */
-export async function sealToken(secret: string, workspaceId: string, token: string) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const sealed = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: encoder.encode(workspaceId) }, await tokenKey(secret), encoder.encode(token),
-  );
-  return `v1.${toBase64(iv)}.${toBase64(new Uint8Array(sealed))}`;
-}
-export async function openToken(secret: string, workspaceId: string, sealed: string) {
-  const [version, iv, data] = sealed.split(".");
-  if (version !== "v1" || !iv || !data) throw new Error("SLACK_TOKEN_FORMAT");
-  const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: fromBase64(iv), additionalData: encoder.encode(workspaceId) }, await tokenKey(secret), fromBase64(data),
-  );
-  return new TextDecoder().decode(plain);
-}
 
 const missingScopes = (granted: string | null | undefined) => {
   const have = new Set((granted ?? "").split(",").map(scope => scope.trim()));
   return slackBotScopes.filter(scope => !have.has(scope));
-};
-// Slack error codes are short snake_case identifiers; log nothing else from Slack responses.
-const slackErrorCode = (body: unknown) => {
-  const code = (body as { error?: unknown } | null)?.error;
-  return typeof code === "string" && /^[a-z_]{1,64}$/.test(code) ? code : "unknown";
 };
 
 type Grant = { token: string; scope: string; botUserId: string; appId: string; teamId: string; teamName: string; installerId: string };
@@ -205,20 +180,6 @@ export async function slackBot(context: Context<SlackEnv>): Promise<SlackBot | n
   return { workspaceId: row.id, slackTeamId: row.slack_team_id, botUserId: row.bot_user_id, token: await openToken(key, row.id, row.token_ciphertext) };
 }
 
-// Untrusted Slack JSON; route code checks every field it uses.
-export type SlackResult = { ok: true; body: Record<string, any> } | { ok: false; error: string; retryAfter?: number };
-/** One Web API call with the bot token. Throws only on network failure. */
-export async function callSlack(send: SlackFetch, token: string, method: string, params: Record<string, string>): Promise<SlackResult> {
-  const response = await send(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams(params).toString(),
-  });
-  const body = await response.json().catch(() => null);
-  if (response.ok && body?.ok === true) return { ok: true, body };
-  const retryAfter = Number(response.headers.get("Retry-After"));
-  return { ok: false, error: response.status === 429 ? "ratelimited" : slackErrorCode(body), ...(retryAfter > 0 ? { retryAfter } : {}) };
-}
 /** Common answer for a Slack failure the route does not handle itself. Never echoes Slack bodies. */
 export function slackFailure(context: Context, method: string, result: { error: string; retryAfter?: number }) {
   if (result.error === "ratelimited") {
