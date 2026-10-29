@@ -66,7 +66,7 @@ await rejects(
 );
 const sql: string[] = [];
 for (const p of f.professors) sql.push(`INSERT INTO professors VALUES (${quote(p.id)}, ${quote(p.email)}, 5000);`);
-for (const c of f.courses) sql.push(`INSERT INTO courses VALUES (${quote(c.id)}, ${quote(c.professorId)}, ${quote(c.name)}, 5000);`);
+for (const c of f.courses) sql.push(`INSERT INTO courses (id, professor_id, name, created_at) VALUES (${quote(c.id)}, ${quote(c.professorId)}, ${quote(c.name)}, 5000);`);
 for (const t of f.teams) sql.push(`INSERT INTO teams (id, workspace_id, channel_id, name, collection_status, course_id) VALUES (${quote(t.id)}, 'legacy-workspace', ${quote(t.channelId)}, ${quote(t.name)}, 'inactive', ${quote(t.courseId)});`);
 for (const s of f.students) sql.push(`INSERT INTO students VALUES (${quote(s.id)}, ${quote(s.courseId)}, ${quote(s.displayName)}, 5000);`);
 for (const m of f.members) {
