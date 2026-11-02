@@ -62,6 +62,24 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .workspace-card h2 { margin: 16px 0 12px; font-size: 18px; font-weight: 600; }
 .workspace-card .step-number { font-family: monospace; color: #23634f; font-size: 12px; }
 .workspace-card .pill { margin-top: 20px; }
+.setup-wizard { margin-top: 24px; }
+.setup-policy { padding: 20px; border: 1px solid #192f2b30; border-radius: 12px; font-size: 14px; line-height: 1.9; }
+.setup-toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 20px 0; }
+.setup-section { padding: 28px 0; border-top: 1px solid #192f2b25; }
+.setup-section h2 { font-size: 22px; font-weight: 600; margin-bottom: 16px; }
+.setup-section h3 { font-size: 18px; font-weight: 600; }
+.setup-section p, .setup-section li { font-size: 14px; line-height: 1.9; margin: 12px 0; overflow-wrap: anywhere; }
+.setup-section ul { list-style: disc; padding-left: 24px; }
+.setup-section label { display: block; margin: 12px 0; font-size: 14px; }
+.setup-section input:not([type=checkbox]), .setup-section select { display: block; width: 100%; max-width: 480px; padding: 12px; min-height: 44px; border: 1px solid #80958b; border-radius: 8px; background: white; font: inherit; font-size: 16px; margin-top: 8px; }
+.setup-form { max-width: 520px; padding: 20px; margin: 20px 0; border-radius: 12px; background: #fff; border: 1px solid #192f2b20; }
+.setup-form legend { font-weight: 600; }
+.setup-section .button { margin: 8px 8px 8px 0; }
+.setup-student { border-left: 3px solid #23634f; padding: 16px 0 16px 20px; margin-top: 24px; }
+.setup-section .check-label { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.check-label input { width: 20px; height: 20px; accent-color: #23634f; }
+.check-label small { display: block; color: #52695f; font-size: 13px; line-height: 1.8; }
+.setup-toolbar a { min-height: 44px; padding: 12px 0; text-decoration: underline; font-size: 14px; }
 @media (max-width: 640px) {
   .workspace-page { padding: 0 20px; }
   .site-header { padding: 24px 0; }

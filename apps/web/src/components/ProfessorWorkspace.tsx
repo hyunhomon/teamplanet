@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type SubmitEvent } from "react";
 import { AuthController } from "../lib/auth";
+import SetupWizard from "./SetupWizard";
+import { setupLocation } from "../lib/setup";
 
 const secondsUntil = (at: number, now: number) => Math.max(0, Math.ceil((at - now) / 1000));
 
@@ -46,7 +48,7 @@ export default function ProfessorWorkspace() {
     if (state.phase === "authenticated" || state.phase === "checking") { setEmail(""); setCode(""); }
     if (state.phase === "authenticated" || state.phase === "signed_out") {
       const path = state.phase === "authenticated" ? "/workspace" : "/login";
-      window.history.replaceState(null, "", path);
+      window.history.replaceState(null, "", path + setupLocation(window.location.search).search);
       document.title = `${state.phase === "authenticated" ? "교수 워크스페이스" : "교수 로그인"} · TeamPlanet`;
     }
   }, [state.phase]);
@@ -72,23 +74,7 @@ export default function ProfessorWorkspace() {
         <button className="button secondary" onClick={() => void logout()}>로그아웃</button>
       </div>
       <p className="signed-in-as"><span>로그인 계정</span> {state.session.professor.email}</p>
-      <div className="welcome-panel">
-        <span className="pill">시작 안내</span>
-        <h2>함께 나눈 대화, 근거 있는 피드백으로.</h2>
-        <p>수업과 공식 Slack 채널을 연결하고 참가자 동의를 확인하는 기능을 준비하고 있습니다.</p>
-        <p>수집과 분석은 고지·동의된 공식 채널에 한해 진행되며, 최종 평가는 교수님이 검토하고 확정합니다.</p>
-      </div>
-      <div className="workspace-grid">
-        {[
-          ["01", "수업과 Slack 연결", "수업·팀별 공식 채널과 참가자를 설정합니다."],
-          ["02", "동의와 수집 상태", "참가자 동의와 수집 가능 상태를 확인합니다."],
-          ["03", "분석과 교수 검토", "기간을 정해 분석하고 근거·반례·한계를 검토합니다."],
-        ].map(([number, title, description]) => (
-          <article className="workspace-card" key={number}>
-            <p className="step-number">{number} /</p><h2>{title}</h2><p>{description}</p><span className="pill">준비 중</span>
-          </article>
-        ))}
-      </div>
+      <SetupWizard onSignedOut={() => controller.resetSession("세션이 만료되었습니다. 다시 로그인해 주세요.")} />
     </section>
   );
 
