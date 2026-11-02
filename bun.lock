@@ -15,6 +15,7 @@
       "name": "@teamplanet/api",
       "version": "0.0.0",
       "dependencies": {
+        "@teamplanet/collection": "workspace:*",
         "@teamplanet/contracts": "workspace:*",
         "@teamplanet/db": "workspace:*",
         "@teamplanet/queue": "workspace:*",
@@ -59,6 +60,16 @@
     "packages/ai-core": {
       "name": "@teamplanet/ai-core",
       "version": "0.0.0",
+    },
+    "packages/collection": {
+      "name": "@teamplanet/collection",
+      "version": "0.0.0",
+      "dependencies": {
+        "@teamplanet/contracts": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261024.1",
+      },
     },
     "packages/contracts": {
       "name": "@teamplanet/contracts",
@@ -464,6 +475,8 @@
     "@teamplanet/ai-core": ["@teamplanet/ai-core@workspace:packages/ai-core"],
 
     "@teamplanet/api": ["@teamplanet/api@workspace:apps/api"],
+
+    "@teamplanet/collection": ["@teamplanet/collection@workspace:packages/collection"],
 
     "@teamplanet/consumer": ["@teamplanet/consumer@workspace:apps/consumer"],
 
