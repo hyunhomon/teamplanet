@@ -1,0 +1,11 @@
+---
+import StudentConsent from "../../components/StudentConsent";
+import "../../styles/global.css";
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+---
+<!doctype html>
+<html lang="ko">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="robots" content="noindex,nofollow" /><meta name="referrer" content="no-referrer" /><title>학생 동의서 재확인 · TeamPlanet</title></head>
+  <body><main><StudentConsent client:only="react"><p slot="fallback" class="auth-card" role="status">개인 동의서 안내를 확인하고 있습니다.</p></StudentConsent><noscript><p>동의서를 확인하려면 JavaScript를 켜 주세요. 불가능하면 담당 교수에게 문의하세요.</p></noscript></main></body>
+</html>

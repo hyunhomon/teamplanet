@@ -217,6 +217,8 @@ export const consentConfirmations = sqliteTable("consent_confirmations", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
   confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+  // NULL legacy links must be reissued; timestamps alone cannot distinguish same-ms regrants.
+  consentHistoryId: integer("consent_history_id").references(() => consentHistory.id),
 }, table => [index("consent_confirmations_student").on(table.teamId, table.studentId)]);
 /** Allowed collection intervals. Exactly one open window while a team is active; closed windows keep the past intervals. */
 export const collectionWindows = sqliteTable("collection_windows", {

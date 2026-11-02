@@ -6,6 +6,7 @@ import {
   collectionStatusResponseSchema, competencyLabels, competencyKeys, rubricSelectionSchema, courseRubricResponseSchema,
 } from "@teamplanet/contracts";
 import { SetupController, setupLocation, activationReasons, oauthMessages, type Schema } from "../lib/setup";
+import ConsentInvitation from "./ConsentInvitation";
 
 const competencyDescriptions = {
   clarity: "목표·요청·제약을 상대가 이해하도록 전달하는지 살펴봅니다.",
@@ -114,7 +115,7 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
     </section>}
 
     {state.courseId && <section className="setup-section" aria-labelledby="participants-title"><h2 id="participants-title">4. 참가자·동의 확인</h2>
-      <p>교수가 학생 본인과 종이 서류를 확인한 뒤 증빙 참조만 기록하세요. 스캔 파일·학생 대화·개인정보를 참조에 넣지 마세요. QR 학생 화면은 별도 구현 중입니다.</p>
+      <p>교수가 학생 본인과 종이 서류를 확인한 뒤 증빙 참조만 기록하세요. 스캔 파일·학생 대화·개인정보를 참조에 넣지 마세요. 개인 QR은 학생 본인을 확인한 후 직접 전달하세요.</p>
       <SetupForm title="학생 등록" fields={[{ name: "displayName", label: "학생 표시명" }]} schema={createStudentSchema} disabled={disabled} submit={data => controller.mutate(`courses/${state.courseId}/students`, studentSchema, data)} />
       {!state.busy && !state.students.length && <p>등록된 학생이 없습니다.</p>}
       {team && state.students.map(student => {
@@ -125,9 +126,11 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
           <SetupForm title="Slack 계정 매핑" fields={[{ name: "slackUserId", label: `${student.displayName}의 Slack 사용자 ID` }]} schema={{ safeParse: data => setTeamMemberSchema.safeParse({ ...(data as object), workspaceId: state.connection?.workspace?.id }) }} disabled={disabled}
             submit={data => controller.mutate(`teams/${team.id}/members/${student.id}`, teamMemberSchema, data, "PUT")} />
           <button className="button secondary" disabled={disabled || !member} onClick={() => void controller.mutate(`teams/${team.id}/invite`, inviteTeamResponseSchema, { studentId: student.id }, "POST", result => result.status === "manual_invite_required" ? "자동 초대가 불가능합니다. Slack 관리자가 해당 학생을 직접 초대하고 참여 상태를 다시 조회하세요." : result.status === "already_member" ? "이미 채널에 참여한 학생입니다." : "초대 요청이 성공했습니다. 실제 채널 참여 여부를 다시 확인하세요.")}>공식 채널 초대</button>
-          <SetupForm title="오프라인 동의 확보 기록" fields={[{ name: "evidenceRef", label: `${student.displayName}의 동의서 증빙 참조` }]} schema={{ safeParse: data => setConsentSchema.safeParse({ ...(data as object), status: "granted", version: state.pilot?.consentVersion }) }} disabled={disabled || !member || !state.pilot?.policyApproved}
+          <SetupForm title="오프라인 동의 확보 기록" fields={[{ name: "evidenceRef", label: `${student.displayName}의 동의서 증빙 참조` }]} schema={{ safeParse: data => setConsentSchema.safeParse({ ...(data as object), status: "granted", version: state.pilot?.consentVersion }) }} disabled={disabled || !state.pilot?.policyApproved}
             submit={data => controller.mutate(`teams/${team.id}/consents/${student.id}`, consentSchema, data, "PUT")} />
-          <p>학생 재확인이 없으면 수집할 수 없습니다. 학생 본인 확인·QR 화면을 준비 중이므로 동의서 확보만으로 재확인이 완료되지 않습니다.</p>
+          <ConsentInvitation teamId={team.id} studentId={student.id} studentName={student.displayName}
+            disabled={disabled || consent?.status !== "granted" || consent?.version !== state.pilot?.consentVersion || !!consent?.studentConfirmedAt} />
+          <p>학생 재확인과 Slack 계정 매핑·실제 채널 참여가 모두 확인되기 전에는 수집할 수 없습니다.</p>
         </article>;
       })}
     </section>}
