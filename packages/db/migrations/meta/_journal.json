@@ -57,6 +57,13 @@
       "when": 1793239826076,
       "tag": "0007_condemned_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1793607953170,
+      "tag": "0010_course_rubric_settings",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,13 @@
 # API Contract
 
+## 수업별 선택 역량 — #9
+
+`GET /v1/courses/:courseId/rubric`은 `{courseId, selection, updatedAt}`를 반환한다. 설정 전에는 `selection`과 `updatedAt` 모두 null이며 네 역량을 자동 선택하지 않는다. `PUT` 요청은 기존 `rubricSelectionSchema`의 `{rubricVersion:"communication-v1", selectedCompetencies:[...]}`이고, 명시적인 1~4개·중복 없음·알려진 역량만 허용한다. 성공 응답은 `courseRubricResponseSchema`다.
+
+교수 세션·동일 Origin·수업 소유권 검사를 적용한다. 다른 교수의 수업과 없는 수업은 같은 404다. 저장과 `course.rubric_set` 감사 기록을 원자적 batch로 처리하고, 거부된 읽기/쓰기도 대상 ID와 행위자만 감사한다. 설정은 migration `0010_course_rubric_settings.sql`의 별도 테이블에 보관하며 기존 동의 이력·원문·run/평가/교수 확정본을 수정하지 않는다. 저장값이 손상되면 자동 기본값을 만들지 않고 오류로 처리한다.
+
+이 설정은 수집 동의가 아니며 수집 gate를 대체하지 않는다. #16은 새 run 생성 시 선택과 버전을 snapshot으로 고정해야 한다. 현재 설정 변경이 과거 run의 선택 범위를 바꿔서는 안 된다. 분석 실행·데이터 품질·권한 검증은 각각의 후속 API에서 수행한다.
+
 이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7, 동의 gate·활성화는 #8에서 구현했다. Slack Events·History 수집은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법

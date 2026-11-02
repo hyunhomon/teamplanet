@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { course, team, student, consent, workspace, failures } from "@teamplanet/contracts/fixtures";
-import { activateTeamResponseSchema, inviteTeamResponseSchema } from "@teamplanet/contracts";
+import { activateTeamResponseSchema, inviteTeamResponseSchema, courseRubricResponseSchema, type RubricSelection } from "@teamplanet/contracts";
 import { activationReasons, SetupController, setupLocation } from "../apps/web/src/lib/setup";
 
 const at = Date.parse("2026-10-26T00:00:00.000Z");
@@ -17,6 +17,7 @@ function fixture() {
     courses: course.list, teams: team.list,
     [`courses/${course.response.id}/students`]: student.list,
     [`courses/${course.response.id}/pilot`]: { courseId: course.response.id, consentVersion: consent.grant.version, endsAt: "2027-02-28T00:00:00.000Z", policyApproved: true },
+    [`courses/${course.response.id}/rubric`]: { courseId: course.response.id, selection: null, updatedAt: null },
     [`teams/${team.response.id}/members`]: team.members,
     [`teams/${team.response.id}/membership`]: { teamId: team.response.id, checkedAt: "2026-10-26T00:00:00.000Z", botInChannel: true, members: [{ ...team.members.members[0], inChannel: true }], unmappedChannelMembers: [], complete: true },
   };
@@ -31,6 +32,10 @@ function fixture() {
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     if (delay) await delay;
     if (signedOut) return Response.json(failures.signedOut.body, { status: 401 });
+    if (method === "PUT" && path.endsWith("/rubric")) {
+      replies[path] = { courseId: course.response.id, selection: JSON.parse(String(init?.body)), updatedAt: new Date(at).toISOString() };
+      return Response.json(replies[path]);
+    }
     if (method === "POST" && path.endsWith("activate")) {
       if (denied) return Response.json(failures.missingConsent.body, { status: 409 });
       activated = true; return Response.json(team.activated);
@@ -72,6 +77,26 @@ test("successful activation is followed by a fresh server read", async () => {
 test("student re-confirmation is required in addition to paper consent", async () => {
   const h = fixture(); h.revoke(); await h.controller.refresh();
   expect(activationReasons(h.controller.getSnapshot(), at).join(" ")).toContain("재확인");
+});
+
+test("rubric remains unset until explicit save and restores from a later server read", async () => {
+  const h = fixture(); await h.controller.refresh();
+  expect(h.controller.getSnapshot().rubric?.selection).toBeNull();
+  const selection: RubricSelection = { rubricVersion: "communication-v1", selectedCompetencies: ["clarity", "decision_execution"] };
+  await h.controller.mutate(`courses/${course.response.id}/rubric`, courseRubricResponseSchema, selection, "PUT");
+  expect(h.controller.getSnapshot().rubric?.selection).toEqual(selection);
+  await h.controller.refresh();
+  expect(h.controller.getSnapshot().rubric?.selection).toEqual(selection);
+  expect(h.calls.filter(c => c.method === "PUT")).toHaveLength(1);
+});
+
+test("another course's rubric response is rejected even when team responses are valid", async () => {
+  const h = fixture(); h.replies[`courses/${course.response.id}/rubric`] = {
+    courseId: "course_00000000-0000-4000-8000-000000000002", selection: null, updatedAt: null,
+  };
+  await h.controller.refresh();
+  expect(h.controller.getSnapshot().rubric).toBeNull();
+  expect(h.controller.getSnapshot().error).not.toBe("");
 });
 test("schema-valid response for another team cannot enable activation", async () => {
   const h = fixture(); h.mismatch(); await h.controller.refresh();

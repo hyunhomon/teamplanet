@@ -2,9 +2,9 @@ import {
   apiErrorSchema, courseIdSchema, teamIdSchema, slackInstallOutcomeSchema,
   slackConnectionSchema, courseListResponseSchema, teamListResponseSchema,
   studentListResponseSchema, teamMemberListResponseSchema, consentListResponseSchema,
-  coursePilotResponseSchema, teamMembershipSchema, collectionStatusResponseSchema,
+  coursePilotResponseSchema, teamMembershipSchema, collectionStatusResponseSchema, courseRubricResponseSchema,
   type SlackConnection, type Course, type Team, type Student, type TeamMember,
-  type Consent, type CoursePilotResponse, type TeamMembership, type CollectionStatusResponse,
+  type Consent, type CoursePilotResponse, type TeamMembership, type CollectionStatusResponse, type CourseRubricResponse,
 } from "@teamplanet/contracts";
 
 export type Schema<T> = { safeParse(data: unknown): { success: true; data: T } | { success: false } };
@@ -36,10 +36,11 @@ export type SetupState = {
   connection: SlackConnection | null; courses: Course[]; teams: Team[];
   courseId: string; teamId: string; students: Student[]; members: TeamMember[];
   consents: Consent[]; pilot: CoursePilotResponse | null;
+  rubric: CourseRubricResponse | null;
   membership: TeamMembership | null; collection: CollectionStatusResponse | null;
 };
 const detail = { students: [] as Student[], members: [] as TeamMember[], consents: [] as Consent[],
-  pilot: null, membership: null, collection: null };
+  pilot: null, membership: null, collection: null, rubric: null };
 const errorMessages: Record<string, string> = {
   UNAUTHENTICATED: "세션이 만료되었습니다. 다시 로그인해 주세요.",
   FORBIDDEN: "요청을 허용할 수 없습니다. 페이지를 새로고침하고 다시 시도하세요.",
@@ -100,12 +101,13 @@ export class SetupController {
     const teamId = teams.some(t => t.id === this.state.teamId) ? this.state.teamId : teams[0]?.id ?? "";
     const common = { ...detail, connection, courses: courseList.courses, teams, courseId, teamId };
     if (!courseId) return common;
-    const [students, pilot] = await Promise.all([
+    const [students, pilot, rubric] = await Promise.all([
       this.request(`courses/${courseId}/students`, studentListResponseSchema, signal),
       this.request(`courses/${courseId}/pilot`, coursePilotResponseSchema, signal),
+      this.request(`courses/${courseId}/rubric`, courseRubricResponseSchema, signal),
     ]);
-    if (pilot.courseId !== courseId || students.students.some(s => s.courseId !== courseId)) throw new SetupFailure("INVALID_RESPONSE");
-    if (!teamId) return { ...common, students: students.students, pilot };
+    if (pilot.courseId !== courseId || rubric.courseId !== courseId || students.students.some(s => s.courseId !== courseId)) throw new SetupFailure("INVALID_RESPONSE");
+    if (!teamId) return { ...common, students: students.students, pilot, rubric };
     const [members, consents, membership, collection] = await Promise.all([
       this.request(`teams/${teamId}/members`, teamMemberListResponseSchema, signal),
       this.request(`teams/${teamId}/consents`, consentListResponseSchema, signal),
@@ -117,7 +119,7 @@ export class SetupController {
       || students.students.some(s => s.courseId !== courseId)
       || members.members.some(m => m.teamId !== teamId || m.courseId !== courseId)
       || consents.consents.some(c => c.teamId !== teamId)) throw new SetupFailure("INVALID_RESPONSE");
-    return { ...common, students: students.students, pilot, members: members.members, consents: consents.consents, membership, collection };
+    return { ...common, students: students.students, pilot, rubric, members: members.members, consents: consents.consents, membership, collection };
   }
 
   private async perform(action?: (signal: AbortSignal) => Promise<string>) {

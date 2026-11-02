@@ -3,7 +3,7 @@ import {
   courseSchema, createCourseSchema, createStudentSchema, studentSchema, createTeamSchema, teamSchema,
   coursePilotSchema, coursePilotResponseSchema, setTeamMemberSchema, teamMemberSchema,
   setConsentSchema, consentSchema, inviteTeamResponseSchema, activateTeamResponseSchema,
-  collectionStatusResponseSchema, competencyLabels, competencyKeys, rubricSelectionSchema,
+  collectionStatusResponseSchema, competencyLabels, competencyKeys, rubricSelectionSchema, courseRubricResponseSchema,
 } from "@teamplanet/contracts";
 import { SetupController, setupLocation, activationReasons, oauthMessages, type Schema } from "../lib/setup";
 
@@ -45,6 +45,9 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
   const [selected, setSelected] = useState<string[]>([]);
   const [selectionMessage, setSelectionMessage] = useState("");
   useEffect(() => {
+    setSelected(state.rubric?.selection?.selectedCompetencies ?? []);
+  }, [state.rubric]);
+  useEffect(() => {
     void controller.refresh();
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => { clearInterval(timer); controller.dispose(); };
@@ -55,7 +58,7 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
     if (state.teamId) params.set("team", state.teamId);
     if (location.outcome) params.set("slack", location.outcome);
     window.history.replaceState(null, "", `/workspace${params.size ? `?${params}` : ""}`);
-    setSelected([]); setSelectionMessage("");
+    setSelectionMessage("");
   }, [state.courseId, state.teamId, location.outcome]);
   const waiting = Math.max(0, Math.ceil((state.retryAt - now) / 1000));
   const disabled = state.busy || waiting > 0;
@@ -98,9 +101,15 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
     </section>
 
     {state.courseId && <section className="setup-section" aria-labelledby="rubric-title"><h2 id="rubric-title">3. 분석 역량 선택</h2>
-      <p>communication-v1에서 1~4개를 직접 선택하세요. 역량 저장 기능은 준비 중이므로 아래 선택은 검토용이며 저장되지 않습니다. 분석은 아직 시작할 수 없습니다.</p>
-      <fieldset><legend>분석에 사용할 역량 검토</legend>{competencyKeys.map(key => <label className="check-label" key={key}><input type="checkbox" checked={selected.includes(key)} onChange={e => setSelected(current => e.target.checked ? [...current, key] : current.filter(k => k !== key))} /><span>{competencyLabels[key]}<small>{competencyDescriptions[key]}</small></span></label>)}</fieldset>
-      <button className="button secondary" onClick={() => setSelectionMessage(rubricSelectionSchema.safeParse({ rubricVersion: "communication-v1", selectedCompetencies: selected }).success ? "선택 범위는 유효합니다. 저장 기능이 준비되기 전에는 분석 설정으로 적용되지 않습니다." : "역량을 1개 이상 직접 선택하세요.")}>선택 범위 확인</button>
+      <p>communication-v1에서 1~4개를 직접 선택하고 저장하세요. 저장한 범위는 새 분석에 사용할 설정이며 과거 결과를 변경하지 않습니다. 분석 실행 기능은 준비 중입니다.</p>
+      <p>서버에 저장된 역량: {state.rubric?.selection ? state.rubric.selection.selectedCompetencies.map(key => competencyLabels[key]).join(", ") : "미설정"}</p>
+      <fieldset disabled={disabled}><legend>분석에 사용할 역량</legend>{competencyKeys.map(key => <label className="check-label" key={key}><input type="checkbox" checked={selected.includes(key)} onChange={e => setSelected(current => e.target.checked ? [...current, key] : current.filter(k => k !== key))} /><span>{competencyLabels[key]}<small>{competencyDescriptions[key]}</small></span></label>)}</fieldset>
+      <button className="button secondary" disabled={disabled} onClick={() => {
+        const parsed = rubricSelectionSchema.safeParse({ rubricVersion: "communication-v1", selectedCompetencies: selected });
+        if (!parsed.success) { setSelectionMessage("역량을 1개 이상 직접 선택하세요."); return; }
+        setSelectionMessage("");
+        void controller.mutate(`courses/${state.courseId}/rubric`, courseRubricResponseSchema, parsed.data, "PUT", "분석 역량을 저장했습니다.");
+      }}>분석 역량 저장</button>
       <p role="status">{selectionMessage}</p>
     </section>}
 
@@ -124,7 +133,7 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
     </section>}
 
     {team && <section className="setup-section" aria-labelledby="activate-title"><h2 id="activate-title">5. 수집 상태와 활성화</h2>
-      <p role="status">{state.collection ? stateLabel[state.collection.collectionStatus] : "수집 상태 미확인"} · 분석 설정은 미완료</p>
+      <p role="status">{state.collection ? stateLabel[state.collection.collectionStatus] : "수집 상태 미확인"} · {state.rubric?.selection ? "분석 역량 설정됨 · 분석 실행 준비 중" : "분석 역량 미설정"}</p>
       <p>공식 채널: {team.channelId} · 봇 참여: {state.membership ? state.membership.botInChannel ? "확인" : "미참여" : "미확인"}</p>
       {state.membership && <><p>미매핑 채널 계정: {state.membership.unmappedChannelMembers.length}명 · 미참여 학생: {state.membership.members.filter(m => !m.inChannel).length}명</p><p>멤버십 검증 시각: {state.membership.checkedAt}</p></>}
       {reasons.length > 0 && <ul>{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}

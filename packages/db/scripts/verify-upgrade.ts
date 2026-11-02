@@ -83,6 +83,12 @@ for (const [index, p] of f.professors.entries()) {
   ]]);
 }
 deepStrictEqual(await query("PRAGMA foreign_key_check;"), [[]]);
+const rubricCourseId = quote(f.courses[0]!.id);
+await query(`INSERT INTO course_rubric_settings (course_id, rubric_version, selected_competencies_json, updated_at)
+  VALUES (${rubricCourseId}, 'communication-v1', '["clarity"]', 1);`);
 await apply(); // Idempotent migration tracking must not duplicate audit triggers/history.
+deepStrictEqual(await query(`SELECT rubric_version, selected_competencies_json FROM course_rubric_settings WHERE course_id = ${rubricCourseId};`), [[
+  { rubric_version: "communication-v1", selected_competencies_json: '["clarity"]' },
+]]);
 deepStrictEqual(await query("SELECT count(*) AS count FROM consent_history;"), [[{ count: 4 }]]);
 console.log("PASS: local D1 legacy upgrade, all evaluation fields, audit history/triggers, two-professor ownership, single workspace, FK check and repeated migration.");
