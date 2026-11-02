@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { competencyKeys } from "./keys";
 import { competencyAssessmentSchema } from "./validation";
+import { courseIdSchema, dateTimeSchema } from "./api";
 
 export const rubricVersion = "communication-v1" as const;
 export const competencyLabels = {
@@ -17,6 +18,12 @@ export const rubricSelectionSchema = z.strictObject({
     .refine(keys => new Set(keys).size === keys.length, "Duplicate competency"),
 });
 export type RubricSelection = z.infer<typeof rubricSelectionSchema>;
+
+// An unset selection is explicit; no implicit all-competencies default.
+export const courseRubricResponseSchema = z.strictObject({
+  courseId: courseIdSchema, selection: rubricSelectionSchema.nullable(), updatedAt: dateTimeSchema.nullable(),
+}).refine(value => (value.selection === null) === (value.updatedAt === null), "Selection and timestamp must be present together");
+export type CourseRubricResponse = z.infer<typeof courseRubricResponseSchema>;
 
 /** Semantic guard after JSON parsing; primary-source authorization remains a server check. */
 export function assessmentSetSchema(
