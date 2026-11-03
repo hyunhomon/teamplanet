@@ -78,9 +78,10 @@ export const consentSchema = z.strictObject({
   studentConfirmedAt: dateTimeSchema.nullable().optional(),
 });
 // #8 course pilot settings. The version must be operator-approved (consent_policies) before consents or activation.
-export const coursePilotSchema = z.strictObject({ consentVersion: versionSchema, endsAt: dateTimeSchema });
+export const coursePilotSchema = z.strictObject({ consentVersion: versionSchema, startsAt: dateTimeSchema.optional(), endsAt: dateTimeSchema })
+  .refine(v => !v.startsAt || v.startsAt < v.endsAt, { path: ["endsAt"], message: "종료일은 시작일보다 뒤여야 합니다." });
 export const coursePilotResponseSchema = z.strictObject({
-  courseId: courseIdSchema, consentVersion: versionSchema.nullable(), endsAt: dateTimeSchema.nullable(), policyApproved: z.boolean(),
+  courseId: courseIdSchema, professorEmail: emailSchema, startsAt: dateTimeSchema.nullable(), consentVersion: versionSchema.nullable(), endsAt: dateTimeSchema.nullable(), policyApproved: z.boolean(),
 });
 // #8 student QR re-confirmation (#29 builds the page). The token travels in the URL fragment and request bodies only.
 export const consentTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);

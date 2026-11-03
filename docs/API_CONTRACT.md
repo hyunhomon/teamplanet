@@ -4,11 +4,11 @@
 
 `GET /v1/courses/:courseId/rubric`은 `{courseId, selection, updatedAt}`를 반환한다. 설정 전에는 `selection`과 `updatedAt` 모두 null이며 네 역량을 자동 선택하지 않는다. `PUT` 요청은 기존 `rubricSelectionSchema`의 `{rubricVersion:"communication-v1", selectedCompetencies:[...]}`이고, 명시적인 1~4개·중복 없음·알려진 역량만 허용한다. 성공 응답은 `courseRubricResponseSchema`다.
 
-교수 세션·동일 Origin·수업 소유권 검사를 적용한다. 다른 교수의 수업과 없는 수업은 같은 404다. 저장과 `course.rubric_set` 감사 기록을 원자적 batch로 처리하고, 거부된 읽기/쓰기도 대상 ID와 행위자만 감사한다. 설정은 migration `0010_course_rubric_settings.sql`의 별도 테이블에 보관하며 기존 동의 이력·원문·run/평가/교수 확정본을 수정하지 않는다. 저장값이 손상되면 자동 기본값을 만들지 않고 오류로 처리한다.
+교수 세션·동일 Origin·수업 소유권 검사를 적용한다. 다른 교수의 수업과 없는 수업은 같은 404다. 저장과 `course.rubric_set` 감사 기록을 원자적 batch로 처리하고, 거부된 읽기/쓰기도 대상 ID와 행위자만 감사한다. 설정은 migration `0011_course_rubric_settings.sql`의 별도 테이블에 보관하며 기존 동의 이력·원문·run/평가/교수 확정본을 수정하지 않는다. 저장값이 손상되면 자동 기본값을 만들지 않고 오류로 처리한다.
 
 이 설정은 수집 동의가 아니며 수집 gate를 대체하지 않는다. #16은 새 run 생성 시 선택과 버전을 snapshot으로 고정해야 한다. 현재 설정 변경이 과거 run의 선택 범위를 바꿔서는 안 된다. 분석 실행·데이터 품질·권한 검증은 각각의 후속 API에서 수행한다.
 
-이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7, 동의 gate·활성화는 #8에서 구현했다. Slack Events·History 수집은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
+이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7, 동의 gate·활성화는 #8, Slack Events 수신은 #11, History·Replies 보정(Queue job)은 #12에서 구현했다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
 
@@ -84,7 +84,7 @@ WHERE s.id = :student_id AND c.professor_id = :session_professor_id;
 3. 경로 ID 형식이 틀리면 400 `VALIDATION_ERROR`.
 4. `owned(context, kind, id)`가 null이면 404 `NOT_FOUND`. `kind`는 `course | team | student | run | evidence`이며 모두 `courses.professor_id = 세션 교수`까지 조인한다. assessment는 run 소유권으로 확인한다.
 
-Slack OAuth callback은 GET이라 1단계 대상이 아니고, 2단계 예외에 추가해 자체 state 검증을 한다(#6). Events(#11)는 서명으로 인증하므로 1·2단계 예외에 추가한다. 예외 경로도 학생 데이터 접근 전에 자체 검증을 통과해야 한다. `/v1/health`는 학생·교수 데이터를 반환하지 않는다.
+Slack OAuth callback은 GET이라 1단계 대상이 아니고, 2단계 예외에 추가해 자체 state 검증을 한다(#6). Events(#11)는 서명으로 인증하므로 1·2단계 예외에 추가했다. 예외 경로도 학생 데이터 접근 전에 자체 검증을 통과해야 한다. `/v1/health`는 학생·교수 데이터를 반환하지 않는다.
 
 감사 로그는 `audit_events`(`actor_professor_id, action, target_type, target_id, result, recorded_at`)다. `audit(context, event, now)`는 INSERT 문을 반환하므로 감사 대상 쓰기와 `DB.batch`로 원자적으로 묶거나 단독 `.run()` 한다. 열은 ID와 열거값뿐이며 본문·요약·이름·OTP·토큰을 넣을 자리가 없다. `result`는 `succeeded | denied`이며 남의 리소스 조회 시도도 `denied`로 남는다. 동의 변경(#8)·데이터 열람(#22)·평가 확정(#23)은 `AuditAction`에 값을 추가해 같은 방식으로 기록한다. 보관 만료 정리는 #14 범위다.
 
@@ -108,7 +108,7 @@ routes.get("/teams/:teamId", async context => {
 
 `code`는 앞자리 0을 보존하는 6자리 문자열이다. `Professor`는 `{id, email, createdAt}`이며 세션 토큰·OTP는 응답 본문에 넣지 않는다. 세션 쿠키는 `__Host-teamplanet_session`, `HttpOnly; Secure; SameSite=Lax; Path=/`, Domain 없음이다. 로컬 HTTP 쿠키 운용은 #2에서 명시적으로 분리하며 production 플래그를 약화하지 않는다. 브라우저는 같은 origin `/v1`과 `credentials: "same-origin"`을 쓴다. 변경 요청은 서버의 Origin/CSRF 검사를 통과해야 한다. 만료·회전·서버 세션 무효화·저장소는 #2 구현 범위다. 로그아웃은 반복 호출에도 200, 로그인하지 않은 `/auth/me`는 `UNAUTHENTICATED`/401이다. 인증 응답은 `Cache-Control: no-store`다.
 
-OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성공/실패 형태·타이밍 정책을 사용한다. 메일 제공자 실패를 발송 성공으로 꾸미지 않는다. 허용 기준·제공자·만료/시도/쿨다운 수치는 #2에서 설정으로 정하며 fixture 숫자를 운영 정책으로 확정하지 않는다. 오입력/재사용/경합 실패는 `OTP_INVALID`, 만료는 `OTP_EXPIRED`, 반복 시도는 `RATE_LIMITED`, 발송 장애는 `EMAIL_DELIVERY_UNAVAILABLE`다. UI는 `resendAvailableAt`까지 기다리고 서버의 429 및 `retryAfterSeconds`/`Retry-After`를 우선한다.
+OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성공/실패 형태·타이밍 정책을 사용한다. 메일 제공자 실패를 발송 성공으로 꾸미지 않는다. 허용 기준·제공자·만료/시도/쿨다운 수치는 #2에서 설정으로 정하며 fixture 숫자를 운영 정책으로 확정하지 않는다. 오입력/재사용/경합 실패는 `OTP_INVALID`, 만료는 `OTP_EXPIRED`, 반복 시도는 `RATE_LIMITED`, 서비스 설정 오류는 `EMAIL_DELIVERY_UNAVAILABLE`이며, 개별 전달 실패는 공개하지 않고 아래 운영 진단으로 확인한다. UI는 `resendAvailableAt`까지 기다리고 서버의 429 및 `retryAfterSeconds`/`Retry-After`를 우선한다.
 
 #2 구현 정책(`apps/api/src/auth.ts`의 `authPolicy`):
 
@@ -122,7 +122,7 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 | 열거 방지 | 미등록 이메일도 같은 202·challenge·발송 제한. 메일은 보내지 않음. OTP 요청 응답은 최소 1초 |
 | Origin | `/v1/*`의 GET/HEAD/OPTIONS 외 요청은 `Origin`이 요청 URL origin과 같아야 함. 아니면 `FORBIDDEN`/403 |
 
-등록 교수에게 메일 제공자가 실패하면 `EMAIL_DELIVERY_UNAVAILABLE`/503이고 challenge를 지운다. 이 응답은 등록 이메일에서만 나오므로 제공자 장애 중에는 등록 여부가 드러날 수 있다. 성공으로 꾸미지 않는다는 계약을 우선했다. 발송 제한은 이메일 기준이라 제3자가 특정 교수의 시간당 요청 한도를 소진시킬 수 있다.
+`202`는 요청 접수이며 메일 전달 성공 응답이 아니다. 등록 이메일의 발송은 Worker `waitUntil`에서 실행해 공급자 지연/실패가 공개 응답과 시간에 반영되지 않는다. 발송 실패는 고정 코드 `auth.email_delivery_failed`로 운영자에게 보고하고 challenge의 교수 연결을 제거해 검증 불가능하게 하되 제한 계산용 행은 보존한다. 미등록 이메일과 동일한 쿨다운·시간당/검증 시도 제한을 유지한다. UI는 발송 성공을 표시하지 않고 요청 접수·수신 확인을 안내한다. 메일 서비스 설정 누락은 이메일 조회 전에 모든 주소에 동일한 `EMAIL_DELIVERY_UNAVAILABLE`/503이다. 실제 전달은 운영자의 테스트 이메일 수신으로 확인하며 운영 로그에 이메일·OTP·토큰·공급자 본문을 남기지 않는다. 발송 제한은 이메일 기준이므로 제3자가 특정 주소의 시간당 한도를 소진시킬 수 있다.
 
 ## 수업·팀·학생 계약 — 구현은 #3/#7
 
@@ -178,9 +178,9 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 ### 동의 gate 구현 — #8 (`apps/api/src/consents.ts`, `packages/collection`)
 
 - **승인된 동의서 버전:** `consent_policies`에 운영자가 D1로 직접 넣은 버전만 승인된 것이다. 행은 동의서와 모델 전송 고지(ADR-0003)를 확인했다는 뜻이며 API로는 추가할 수 없다. 교수는 `PUT /courses/:courseId/pilot`로 승인된 버전과 실제 수업 종료일(미래)을 정한다. 버전을 바꾸면 그 수업의 활성 팀이 즉시 `policy_changed`로 멈추고, 이전 버전의 동의는 무효다.
-- **유효한 동의(서버 판정):** ① `consents.status = granted`, ② 수업의 현재 버전, ③ 그 grant 이후에 발급된 학생 QR 확인 링크로 학생이 재확인. 셋 중 하나라도 없으면 미동의다. 교수의 `granted` 기록에는 `evidenceRef`(종이 동의서 번호 같은 불투명 참조, 개인정보 금지)가 필요하다.
+- **유효한 동의(서버 판정):** ① `consents.status = granted`, ② 수업의 현재 버전, ③ 바로 그 grant(현재 상태를 만든 `consent_history` 행)에 묶여 발급된 학생 QR 확인 링크로 학생이 재확인. 링크는 `consent_confirmations.consent_history_id`로 grant에 묶이므로, 같은 시각에 철회→재동의가 일어나도 이전 링크는 새 grant에 쓰이지 않는다. migration `0008` 이전 링크(NULL)는 어떤 grant에도 묶이지 않아 재발급이 필요하다. 셋 중 하나라도 없으면 미동의다. 교수의 `granted` 기록에는 `evidenceRef`(종이 동의서 번호 같은 불투명 참조, 개인정보 금지)가 필요하다.
 - **이력:** `consents` upsert가 기존 트리거로 `consent_history`를 쓴다. 같은 batch에서 `consent_evidence`가 그 이력 행에 기록 교수와 `evidenceRef`를 붙인다. 같은 상태·버전 반복 PUT은 아무것도 쓰지 않아 학생 재확인을 무효로 만들지 않는다. 팀 멤버가 아닌 학생은 404다.
-- **학생 재확인:** `POST …/confirmation`이 학생별 일회용 링크 `/consent/confirm#<token>`을 만든다(7일, 해시만 저장, 새 링크가 이전 미사용 링크를 지움). 토큰은 URL fragment와 요청 본문으로만 오가므로 서버 로그·Referer에 남지 않는다. `/v1/consent-confirmations/*`는 교수 세션 대신 토큰으로 인증하고 Origin 검사는 그대로 받는다. 확인은 그 링크가 발급된 grant가 현재 상태일 때만 된다. 철회 뒤 옛 링크는 404다. 학생 화면은 #29가 만든다. 링크를 가진 사람을 학생 본인으로 보므로 교수가 학생에게 직접 전달해야 한다.
+- **학생 재확인:** `POST …/confirmation`이 학생별 일회용 링크 `/consent/confirm#<token>`을 만든다(7일, 해시만 저장, 새 링크가 이전 미사용 링크를 지움). 토큰은 URL fragment와 요청 본문으로만 오가므로 서버 로그·Referer에 남지 않는다. `/v1/consent-confirmations/*`는 교수 세션 대신 토큰으로 인증하고 Origin 검사는 그대로 받는다. lookup·confirm·이미 확인된 링크 재사용은 모두 그 링크의 grant가 현재 상태이고, 수업의 승인된 동의서 버전과 같으며, 수업 종료 전일 때만 응답한다. 철회·재동의·버전 변경·종강 뒤 옛 링크는 404이며 학생·수업 정보를 돌려주지 않는다. 발급도 현재 grant가 있을 때 같은 INSERT 안에서 그 이력 ID를 묶는다. 학생 화면은 #29가 만든다. 링크를 가진 사람을 학생 본인으로 보므로 교수가 학생에게 직접 전달해야 한다.
 - **활성화:** 수업 설정(승인 버전·미래 종료일) → #7의 실시간 멤버십 `complete` → 모든 팀 멤버의 유효한 동의 순서로 확인한다. 실패는 `POLICY_NOT_APPROVED`, `CHANNEL_MEMBERSHIP_REQUIRED`, `CONSENT_REQUIRED`/409이고 `team.activate`/`denied` 감사 행이 남는다. 마지막 UPDATE가 같은 조건을 SQL 안에서 다시 검사하므로 확인과 쓰기 사이에 철회가 끼어도 활성화되지 않는다. 이미 활성이면 같은 `activatedAt`을 돌려준다.
 - **허용 구간:** 활성화마다 `collection_windows`에 열린 구간 하나가 생긴다(팀당 열린 구간 1개, 부분 UNIQUE 인덱스). 철회·거절, 버전 변경, 교수 중지(`POST …/deactivate`)는 같은 batch에서 팀을 `paused`로 바꾸고 구간을 닫는다. 닫힌 구간과 `consent_history`로 과거 허용 구간을 재구성한다. 재활성화는 모든 확인을 처음부터 다시 한다.
 - **공통 guard (`@teamplanet/collection`):** `collectionGate(db, {teamId, at, now, slackUserId?})`는 팀 활성·승인 버전·종료일·`at`이 허용 구간 안인지·사용자가 유효 동의를 가진 팀 멤버인지를 확인하고 막힌 이유를 돌려준다. #11 Events와 #12 History는 수신 때와 저장 직전에 이 함수를 다시 부른다. `pauseTeam(db, teamId, reason, at)`은 멈춤 SQL을 돌려주므로 원인 쓰기와 같은 batch로 실행한다. 신규 비동의 멤버·멤버 이탈·봇 제거 이벤트의 자동 멈춤은 #11이 이 함수로 연결한다.
@@ -235,7 +235,7 @@ SELECT workspace_id, name, count(*) FROM teams GROUP BY workspace_id, name HAVIN
 
 ## Slack 설치·연결 — #6 (`apps/api/src/slack.ts`)
 
-단일 파일럿 workspace 하나에 bot을 설치한다. 앱 설정은 [`apps/api/slack-manifest.json`](../apps/api/slack-manifest.json)이고 절차는 [SLACK_ONBOARDING.md](SLACK_ONBOARDING.md) 1단계다. POST `/slack/events`는 #11에서 추가한다.
+단일 파일럿 workspace 하나에 bot을 설치한다. 앱 설정은 [`apps/api/slack-manifest.json`](../apps/api/slack-manifest.json)이고 절차는 [SLACK_ONBOARDING.md](SLACK_ONBOARDING.md) 1단계다. POST `/slack/events`는 아래 "Slack Events 수신"을 따른다.
 
 | Method / Path | 인증 | 응답 |
 |---|---|---|
@@ -249,7 +249,19 @@ SELECT workspace_id, name, count(*) FROM teams GROUP BY workspace_id, name HAVIN
 - **단일 workspace:** 처음 설치가 `workspaces` 행을 만든다. 다른 Slack team이면 기존 행과 토큰을 바꾸지 않고 `workspace_mismatch`와 `slack.install`/`denied` 감사 행을 남긴다. 같은 team 재설치는 교수와 무관하게 설치 행을 교체한다.
 - **토큰 저장:** bot token(`xoxb-`)은 `SLACK_TOKEN_KEY`(32바이트 base64 secret)로 AES-GCM 암호화해 `slack_installations.token_ciphertext`에 둔다. workspace ID를 AAD로 써서 다른 행에서는 열리지 않는다. client secret은 Basic 인증 헤더로만 보낸다. 응답·로그·감사에는 토큰·code·secret이 없고 로그는 Slack 오류 코드만 남긴다.
 - **연결 확인:** `auth.test`만 호출하고 `x-oauth-scopes` 헤더로 현재 scope를 비교한다. 메시지·파일·멤버를 읽지 않으므로 동의 전 백필이 없다. `token_revoked`·`invalid_auth`·`account_inactive`·`token_expired`·`not_authed`면 토큰을 지우고 `revoked`로 바꾼다. rate limit·장애는 철회로 보지 않고 503이다. 다시 설치하면 `connected`로 돌아온다.
-- **상태:** `not_connected | connected | insufficient_scope | revoked`. 채널별 bot membership 확인은 #7, Events의 `app_uninstalled`/`tokens_revoked` 즉시 반영은 #11 범위다.
+- **상태:** `not_connected | connected | insufficient_scope | revoked`. 채널별 bot membership 확인은 #7, Events의 `app_uninstalled`/`tokens_revoked` 즉시 반영은 #11이 한다.
+
+## Slack Events 수신 — #11 (`apps/api/src/events.ts`, `packages/collection/src/events.ts`)
+
+POST `/v1/slack/events`는 교수 세션·Origin 검사 대신 Slack 서명으로 인증한다. manifest의 `event_subscriptions`가 `message.channels`, `member_joined_channel`, `member_left_channel`, `app_uninstalled`, `tokens_revoked`를 구독한다(추가 scope 없음).
+
+- **서명:** `SLACK_SIGNING_SECRET`으로 `v0:<timestamp>:<원문 body>`의 HMAC-SHA256을 WebCrypto로 비교한다. timestamp가 5분보다 차이 나거나 서명이 틀리면 401이고 아무것도 저장·enqueue하지 않는다. secret이 없으면 503. 웹은 `/v1/*` 요청을 원문 그대로 API에 넘긴다. `url_verification`은 서명 확인 뒤 `challenge`만 돌려준다.
+- **접수:** 설치된 workspace(`team_id`)와 앱(`api_app_id`)이 아니면 무시한다. `event_id`로 중복을 막아 Slack 재전송은 200만 받는다. 수집하지 않는 이벤트(DM·group DM·비공개 채널, 등록되지 않은 채널, 봇, 활성 구간 밖, 기타 subtype·이벤트 종류)는 `slack_event_refs`에 id와 `ignored:<이유>`만 남기고 채널·사용자·ts는 남기지 않는다.
+- **원문 비보관:** 메시지 본문은 접수 중 SHA-256 지문을 만들 때만 메모리에 있다. `slack_event_refs`와 Queue job에는 id·kind·채널·ts·작성자·revision·지문만 있다. 테스트가 DB 전체와 Queue envelope에 본문이 없는지 확인한다.
+- **gate 두 번:** 접수 때 `collectionGate`로 팀 활성·허용 구간·작성자 동의를 확인한다. Consumer(`slack.event` handler)가 저장 직전에 다시 확인하고, 저장 batch 첫 문장(`stillCollectable`)이 같은 트랜잭션에서 팀 활성·정책·종강과 작성자 동의를 한 번 더 확인한다. 확인과 쓰기 사이에 철회·멈춤이 오면 batch 전체가 롤백되고 job 재시도에서 `ignored:team_inactive` 등으로 끝난다. 동의 없는 작성자의 메시지는 저장하지 않고 채널을 `unknown_participant`로 멈춘다. 이때 접수 참조에는 채널·작성자 ID만 남기고 메시지 ts·스레드·revision·본문 지문은 기록하지 않는다.
+- **메시지 참조(`message_refs`):** 채널+Slack ts가 PK다. 더 새로운 revision(`edited.ts`)만 반영하므로 중복·순서 역전에도 최종 상태 하나가 남는다. 삭제는 tombstone(작성자·지문 없음)이며 늦게 온 생성·수정이 되살리지 못한다. 기존 `messages` 테이블(본문 열)은 쓰지 않는다. thread_ts는 저장하고 스레드 복원은 #12가 한다.
+- **참가자 변화:** 동의 없는 사용자 입장 → `unknown_participant`, 팀 멤버 퇴장 → `member_left`, 봇 퇴장 → `bot_removed`로 팀을 멈춘다. `app_uninstalled`·bot `tokens_revoked`는 저장된 토큰을 지우고 workspace의 활성 팀을 `slack_revoked`로 멈춘다.
+- **처리 지표:** `slack_event_refs.outcome`(`queued`, `stored`, `tombstoned`, `ignored:*`, `paused:*`, `revoked`)과 `processed_at`. 실패·재시도는 기존 `job_failures`/DLQ를 따른다. 모두 원문·토큰이 없다.
 
 분석은 POST `/analysis-runs` (`analysisRunRequestSchema`: `{teamId,from,to}`), GET `/analysis-runs/:id`, `/analysis-runs/:id/assessments`, POST `/analysis-runs/:id/finalize`를 유지한다. 상태는 `queued → collecting → evidence_extraction → assessment → review → awaiting_professor → finalized`, 오류 상태는 `blocked_provider_billing`, `failed_provider_auth`, `rate_limited`, `failed_model`, `failed_data`, `cancelled`다. `CompetencyAssessment`의 근거·반례·limitations·requiresHumanReview를 보존한다.
 
@@ -263,6 +275,19 @@ SELECT workspace_id, name, count(*) FROM teams GROUP BY workspace_id, name HAVIN
 
 `kind`는 `insufficient_credits | key_limit_exhausted | in_flight_budget | unspecified_provider_billing`이다. provider가 명시적 지연을 제공한 in-flight budget만 일시적 재시도가 가능하다. 일반 잔액 부족 402 자동 재시도·앱 비용 상한·모델 자동 폴백을 추가하지 않는다. #5 서비스 정책은 아래 인수인계를 따르며 루브릭·모델/전송 결정은 ADR-0003을 따르며 실제 외부 전송 고지와 Slack scope(#6)는 시작 전 확인 대상이다.
 
+## History·Replies 보정 — #12 (`packages/collection/src/history.ts`)
+
+HTTP API는 없다. 분석(#16)이 `slack.history` job(`{requestId, teamId, fromMs, toMs}`, key `history:<teamId>:<requestId>`)을 넣고 결과를 `collection_coverage`(request_id 기준)에서 읽는다. Consumer가 실행하며 API와 같은 `SLACK_TOKEN_KEY`로 bot token을 연다.
+
+- **확인한 Slack 조건(2026-10-28, docs.slack.dev):** `conversations.history`·`conversations.replies`는 bot `channels:history`(공개 채널), Tier 3(분당 50회 이상). 2025-05-29 비 Marketplace 상용 앱 제한(분당 1회·15개)은 내부 custom app에 적용되지 않는다. 이 앱을 다른 조직에 배포하면 적용되므로 그때 다시 확인한다. 페이지는 200개, cursor 기반이다.
+- **범위:** 팀의 허용 구간(`collection_windows`)과 요청 `[fromMs, toMs)`의 교집합만 읽는다. Slack에는 `oldest`/`latest`를 inclusive로 보내고 `start ≤ ts < end`인 메시지만 남긴다. Slack ts `s.micro`는 ms로 내림해 비교하며 같은 ts의 구간 시작은 포함, 끝은 제외다. 활성화 전 시각은 Slack에 묻지도 않는다. 요청 범위에 허용 구간 밖 시간이 있으면 `partial` + `outside_allowed_window`다.
+- **gate:** 페이지마다 팀 단위 `collectionGate`, 메시지마다 작성자 동의를 확인한다. 동의 없는 작성자·봇·시스템 메시지는 저장하지 않고 `excluded` + `unconsented_author_excluded`로 남긴다. 팀이 멈추면 `failed`/`team_inactive`로 끝낸다. 페이지·스레드·완료 쓰기는 같은 D1 batch 안에서 팀 활성·정책·종강과 병합 작성자의 동의를 다시 확인하고, 그사이 철회·멈춤이 있으면 batch 전체(참조, 삭제 보정, 개수, cursor, 완료 상태)를 되돌린다. 팀이 멈췄으면 `failed`, 작성자 동의만 바뀌었으면 재시도해 그 작성자를 제외한다.
+- **스레드:** 구간 안 루트(`reply_count > 0`)는 replies를 끝까지 읽는다. 구간보다 먼저 시작한 스레드는 Events로 알려진 루트만 replies를 읽고, 루트 자체는 가져오지 않는다(`thread_root_outside_window`). Events로도 모르는 오래된 스레드의 새 답글은 놓칠 수 있어 모든 coverage에 `older_thread_replies_from_events_only`를 붙인다.
+- **병합:** #11과 같은 `mergeMessage`라 중복 없이 더 새로운 revision만 반영하고 tombstone은 되살아나지 않는다. 본문은 지문 계산 중에만 메모리에 있다. 실행 시작 시각을 `verified_at`으로 찍고, 구간을 끝까지 읽은 뒤 실행 전에 있던 참조 중 Slack에 없는 것을 삭제(tombstone)로 보정한다(`tombstoned`). 동의가 없어 저장하지 않은 메시지도 "본 것"으로 찍어 삭제로 오인하지 않는다.
+- **페이지 검증:** `messages` 배열과 `has_more`가 없거나, `has_more`와 `next_cursor`가 서로 맞지 않는 응답(예: `has_more: true`인데 cursor 없음)은 끝으로 보지 않고 재시도한다. 그런 응답으로는 삭제 보정이나 완료를 하지 않는다(History·Replies 공통).
+- **재개:** 페이지마다 cursor를 job checkpoint(`h<구간>p<페이지>`)에 병합 쓰기와 같은 트랜잭션으로 저장한다. 중단·재시도 시 마지막 cursor부터 이어서 읽는다. 429는 Slack `Retry-After`로 job을 재시도하고, 네트워크·일시 오류도 재시도한다.
+- **실패는 데이터 없음이 아니다:** `missing_scope`, `not_in_channel`, `channel_not_found`, 토큰 철회 등은 `failed`/`<오류 코드>`로 끝난다. 재시도가 바닥나 job이 dead가 되면 coverage는 `running`으로 남는다. 분석은 `complete`만 전체 수집으로 보고 `running`·`partial`·`failed`는 한계로 표시해야 한다.
+
 ## #5 파일럿 정책 인수인계 — 후속 API 확장
 
 [운영 정책](PRIVACY_AND_DATA.md)과 [ADR-0002](ADR/0002-pilot-policy.md)를 기준으로 #8/#9에서 교수의 오프라인 동의 확인+학생 QR 재확인·증빙 참조·계정/수업/버전 연결을 확장한다. 공개 QR/체크박스만으로 임의 학생의 동의를 쓰지 못하게 한다. 전원 사전 동의·고정 참가자 파일럿을 전제로 대체 평가/개정 전용 UI는 제외하되 서버 gate는 유지한다. 이 문서는 새 엔드포인트/공유 타입이 구현됐다는 뜻이 아니다.
@@ -270,3 +295,7 @@ SELECT workspace_id, name, count(*) FROM teams GROUP BY workspace_id, name HAVIN
 수업에는 실제 종료일·교수 연락처를, 문의에는 교수 설정 답변/보관 기한 n일과 접수별 만료 시각을 정의해야 한다. 문의는 접수+n일에 답변 여부와 무관하게 자동 삭제하며 설정 변경으로 기존 기한을 암묵적으로 바꾸지 않는다. 요약·리포트·근거/관련 이력은 수업 종료 후 3개월에 삭제한다. 구체 필드·공유 schema·런타임 검증·migration은 해당 구현 PR에서 함께 제공한다.
 
 #11/#12/#13/#16은 Slack 원문을 장기 저장하지 않고 참조·revision/지문·요약을 보관한다. 기존 messages.text와 평가 schema를 이번 문서 PR에서 삭제하지 않는다. 원문 재검증 실패/불일치와 실제 삭제를 구분하며, 근거 링크 제외 및 교수 확정본 무효화·재검토 상태를 #14/#22/#23에서 표현한다. 열람·확정·출력은 최신 원문 검증을 거쳐야 하고, 학생 페이지는 본인 동의/문의에 한정한다. 학생 피드백은 교수가 검증된 리포트를 출력해 전달한다.
+
+Events 원문 참조 접수와 Consumer source 쓰기는 collectionWriteGuard를 같은 D1 batch의 첫 검사로 실행합니다. 현재 팀·허용 구간·전체 참가자/정확한 동의 이력·작성자 매핑이 변경되면 참조·checkpoint·처리 완료 쓰기 전체를 rollback하고 재시도/차단합니다. 미적용 Events migration은 동의 이력 FK migration 0008과 번호가 겹쳐 SQL 내용 보존 상태로 0009_brainy_scarlet_spider로 정리하고 통합 schema에서 metadata를 재생성했습니다.
+
+수업 초기 설정은 실제 startsAt·endsAt을 저장하고 소유 교수의 이메일을 서버에서 반환해 표시합니다. 시작/종료 역전은 거부하고 과거 클라이언트의 startsAt 생략은 기존 값을 보존합니다. 문의 기한 n은 #30, 학생 개인 QR은 #29에서 연결합니다. 0008 동의 FK·0009 Events·0010 History를 보존하고 설정 migration은 미적용 상태에서 0011로 재정합했습니다.

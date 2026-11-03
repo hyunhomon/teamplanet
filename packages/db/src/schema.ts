@@ -10,6 +10,7 @@ export const courses = sqliteTable("courses", {
   id: text("id").primaryKey(), professorId: text("professor_id").notNull().references(() => professors.id),
   name: text("name").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   // #8 pilot settings: the approved consent form version (consent_policies) and the real course end time.
+  startsAt: integer("starts_at", { mode: "timestamp_ms" }),
   consentVersion: text("consent_version"), endsAt: integer("ends_at", { mode: "timestamp_ms" }),
 });
 
@@ -217,6 +218,8 @@ export const consentConfirmations = sqliteTable("consent_confirmations", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
   confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+  // The exact grant (consent_history row) the link was issued for; a later change of any kind, even at the same ms, voids it.
+  consentHistoryId: integer("consent_history_id").references(() => consentHistory.id),
 }, table => [index("consent_confirmations_student").on(table.teamId, table.studentId)]);
 /** Allowed collection intervals. Exactly one open window while a team is active; closed windows keep the past intervals. */
 export const collectionWindows = sqliteTable("collection_windows", {
@@ -229,4 +232,56 @@ export const collectionWindows = sqliteTable("collection_windows", {
   uniqueIndex("collection_windows_one_open").on(table.teamId).where(sql`${table.endedAt} IS NULL`),
   index("collection_windows_team").on(table.teamId, table.startedAt),
   check("collection_windows_end", sql`(${table.endedAt} IS NULL AND ${table.endReason} IS NULL) OR (${table.endedAt} >= ${table.startedAt} AND ${table.endReason} IN ('professor', 'consent_changed', 'policy_changed', 'unknown_participant', 'member_left', 'bot_removed', 'slack_revoked', 'course_ended'))`),
+]);
+
+/**
+ * Slack Events intake ledger (#11): dedupe by event_id plus processing outcome. Metadata only — never text or payloads.
+ * Ignored events keep no channel/user/ts so DMs and out-of-scope traffic leave nothing but the id and the reason.
+ */
+export const slackEventRefs = sqliteTable("slack_event_refs", {
+  eventRef: text("event_ref").primaryKey(), workspaceId: text("workspace_id").notNull(), eventId: text("event_id").notNull().unique(),
+  kind: text("kind").notNull(), teamId: text("team_id"), channelId: text("channel_id"), slackTs: text("slack_ts"),
+  threadTs: text("thread_ts"), userId: text("user_id"), revision: text("revision"), contentHash: text("content_hash"),
+  outcome: text("outcome").notNull(), receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull(),
+  processedAt: integer("processed_at", { mode: "timestamp_ms" }),
+}, table => [
+  check("slack_event_refs_kind", sql`${table.kind} IN ('message', 'message_changed', 'message_deleted', 'member_joined', 'member_left', 'revoked', 'ignored')`),
+  index("slack_event_refs_outcome").on(table.outcome, table.receivedAt),
+]);
+/**
+ * Message references (#11/#12): Slack stays the source of text. One row per channel + Slack ts, with the latest
+ * revision, a SHA-256 content fingerprint and a tombstone that later creates/edits can never undo.
+ */
+export const messageRefs = sqliteTable("message_refs", {
+  channelId: text("channel_id").notNull(), slackTs: text("slack_ts").notNull(),
+  teamId: text("team_id").notNull().references(() => teams.id), userId: text("user_id"), threadTs: text("thread_ts"),
+  revision: text("revision").notNull(), contentHash: text("content_hash"),
+  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }), source: text("source").notNull(),
+  firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  verifiedAt: integer("verified_at", { mode: "timestamp_ms" }),
+}, table => [
+  primaryKey({ columns: [table.channelId, table.slackTs] }),
+  index("message_refs_team_ts").on(table.teamId, table.slackTs),
+  index("message_refs_thread").on(table.channelId, table.threadTs),
+  check("message_refs_source", sql`${table.source} IN ('event', 'history')`),
+  check("message_refs_tombstone", sql`${table.deletedAt} IS NULL OR ${table.contentHash} IS NULL`),
+]);
+
+/**
+ * History/Replies recovery coverage (#12), read by analysis (#16). One row per recovery request for a team's [from, to).
+ * `complete` only when every allowed interval was fully paged; limitations name what was outside or excluded.
+ */
+export const collectionCoverage = sqliteTable("collection_coverage", {
+  requestId: text("request_id").primaryKey(), teamId: text("team_id").notNull().references(() => teams.id),
+  fromMs: integer("from_ms").notNull(), toMs: integer("to_ms").notNull(),
+  status: text("status").notNull(), reason: text("reason"),
+  merged: integer("merged").notNull().default(0), excluded: integer("excluded").notNull().default(0),
+  tombstoned: integer("tombstoned").notNull().default(0), oldThreadRoots: integer("old_thread_roots").notNull().default(0),
+  limitationsJson: text("limitations_json").notNull().default("[]"),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [
+  index("collection_coverage_team").on(table.teamId, table.fromMs, table.toMs),
+  check("collection_coverage_status", sql`${table.status} IN ('running', 'complete', 'partial', 'failed')`),
 ]);

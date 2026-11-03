@@ -162,7 +162,7 @@ export class AuthController {
       if (operation.generation !== this.generation) return;
       if (Date.parse(challenge.expiresAt) <= this.clock()) throw new AuthFailure("OTP_EXPIRED");
       this.update({ phase: "code", pending: null, email: input.data.email, challenge,
-        expiredCode: false, notice: "등록된 교수 이메일이면 인증 코드가 도착합니다. 메일함과 스팸함을 확인해 주세요." });
+        expiredCode: false, notice: "인증 코드 발송을 요청했습니다. 등록된 이메일의 메일함·스팸함을 확인하고, 수신되지 않으면 운영자에게 문의하세요." });
     } catch (error) { if (operation.generation === this.generation) this.failure(error); }
   }
 

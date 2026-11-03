@@ -88,10 +88,10 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
         submit={data => controller.mutate("courses", courseSchema, data)} />
       {state.courseId && <>
         <p>운영자가 승인한 고정 동의서 버전을 입력하세요. 전송 고지와 오프라인 서류의 버전이 같아야 합니다.</p>
-        <p>현재 동의서: {state.pilot?.consentVersion ?? "미설정"} · 종료일: {state.pilot?.endsAt ?? "미설정"} · {state.pilot?.policyApproved ? "운영자 승인 버전" : "정책 미확인"}</p>
-        <SetupForm key={`pilot-${state.courseId}`} title="동의서·종료일 저장" fields={[{ name: "consentVersion", label: "승인된 동의서 버전" }, { name: "endsAt", label: "실제 수업 종료 시각 (UTC ISO 형식)" }]} schema={coursePilotSchema} disabled={disabled}
+        <p>담당 교수 이메일: {state.pilot?.professorEmail ?? "확인 중"} · 현재 동의서: {state.pilot?.consentVersion ?? "미설정"} · 시작일: {state.pilot?.startsAt ?? "미설정"} · 종료일: {state.pilot?.endsAt ?? "미설정"} · {state.pilot?.policyApproved ? "운영자 승인 버전" : "정책 미확인"}</p>
+        <SetupForm key={`pilot-${state.courseId}`} title="동의서·수업 기간 저장" fields={[{ name: "consentVersion", label: "승인된 동의서 버전" }, { name: "startsAt", label: "실제 수업 시작 시각 (UTC ISO 형식)" }, { name: "endsAt", label: "실제 수업 종료 시각 (UTC ISO 형식)" }]} schema={coursePilotSchema} disabled={disabled}
           submit={data => controller.mutate(`courses/${state.courseId}/pilot`, coursePilotResponseSchema, data, "PUT")} />
-        <p>수업 시작일·담당 교수 이메일·문의 기한 설정 기능은 준비 중입니다. 운영자에게 확인해 주세요.</p>
+        <p>실제 수업 기간과 표시된 교수 연락처를 확인하세요. 문의 기한 n일은 문의 기능(#30)에서 설정합니다.</p>
         <label>공식 채널 팀<select disabled={disabled || !state.teams.length} value={state.teamId} onChange={e => void controller.select(state.courseId, e.target.value)}><option value="">팀 선택</option>{state.teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
         {!state.busy && !state.teams.length && <p>이 수업에 등록된 팀이 없습니다.</p>}
         <SetupForm key={`team-${state.courseId}`} title="팀·공식 채널 등록" fields={[{ name: "name", label: "팀 이름" }, { name: "channelId", label: "기존 공개 채널 ID (비우면 새 채널 생성)", optional: true }]}

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "eeb5df53-c766-4638-a09b-ee9a51d798c1",
-  "prevId": "65216d6f-1d72-412f-a7ad-f96a58c7d183",
+  "id": "20868679-6568-4827-95e9-d37cf2815e5e",
+  "prevId": "86339981-2a19-4eb4-8223-84d77d5da8ff",
   "tables": {
     "analysis_runs": {
       "name": "analysis_runs",
@@ -402,6 +402,141 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "collection_coverage": {
+      "name": "collection_coverage",
+      "columns": {
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "from_ms": {
+          "name": "from_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "to_ms": {
+          "name": "to_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "merged": {
+          "name": "merged",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "excluded": {
+          "name": "excluded",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "tombstoned": {
+          "name": "tombstoned",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "old_thread_roots": {
+          "name": "old_thread_roots",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "limitations_json": {
+          "name": "limitations_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "collection_coverage_team": {
+          "name": "collection_coverage_team",
+          "columns": [
+            "team_id",
+            "from_ms",
+            "to_ms"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "collection_coverage_team_id_teams_id_fk": {
+          "name": "collection_coverage_team_id_teams_id_fk",
+          "tableFrom": "collection_coverage",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "collection_coverage_status": {
+          "name": "collection_coverage_status",
+          "value": "\"collection_coverage\".\"status\" IN ('running', 'complete', 'partial', 'failed')"
+        }
+      }
+    },
     "collection_windows": {
       "name": "collection_windows",
       "columns": {
@@ -541,6 +676,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "consent_history_id": {
+          "name": "consent_history_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -560,6 +702,19 @@
           "tableTo": "professors",
           "columnsFrom": [
             "issued_by_professor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "consent_confirmations_consent_history_id_consent_history_id_fk": {
+          "name": "consent_confirmations_consent_history_id_consent_history_id_fk",
+          "tableFrom": "consent_confirmations",
+          "tableTo": "consent_history",
+          "columnsFrom": [
+            "consent_history_id"
           ],
           "columnsTo": [
             "id"
@@ -765,67 +920,6 @@
       },
       "uniqueConstraints": {},
       "checkConstraints": {}
-    },
-    "course_rubric_settings": {
-      "name": "course_rubric_settings",
-      "columns": {
-        "course_id": {
-          "name": "course_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "rubric_version": {
-          "name": "rubric_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "selected_competencies_json": {
-          "name": "selected_competencies_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "course_rubric_settings_course_id_courses_id_fk": {
-          "name": "course_rubric_settings_course_id_courses_id_fk",
-          "tableFrom": "course_rubric_settings",
-          "tableTo": "courses",
-          "columnsFrom": [
-            "course_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "course_rubric_version": {
-          "name": "course_rubric_version",
-          "value": "\"course_rubric_settings\".\"rubric_version\" = 'communication-v1'"
-        },
-        "course_rubric_selection": {
-          "name": "course_rubric_selection",
-          "value": "json_valid(\"course_rubric_settings\".\"selected_competencies_json\") AND json_type(\"course_rubric_settings\".\"selected_competencies_json\") = 'array' AND json_array_length(\"course_rubric_settings\".\"selected_competencies_json\") BETWEEN 1 AND 4"
-        }
-      }
     },
     "courses": {
       "name": "courses",
@@ -1154,6 +1248,148 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "message_refs": {
+      "name": "message_refs",
+      "columns": {
+        "channel_id": {
+          "name": "channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "slack_ts": {
+          "name": "slack_ts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "thread_ts": {
+          "name": "thread_ts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "first_seen_at": {
+          "name": "first_seen_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "message_refs_team_ts": {
+          "name": "message_refs_team_ts",
+          "columns": [
+            "team_id",
+            "slack_ts"
+          ],
+          "isUnique": false
+        },
+        "message_refs_thread": {
+          "name": "message_refs_thread",
+          "columns": [
+            "channel_id",
+            "thread_ts"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "message_refs_team_id_teams_id_fk": {
+          "name": "message_refs_team_id_teams_id_fk",
+          "tableFrom": "message_refs",
+          "tableTo": "teams",
+          "columnsFrom": [
+            "team_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "message_refs_channel_id_slack_ts_pk": {
+          "columns": [
+            "channel_id",
+            "slack_ts"
+          ],
+          "name": "message_refs_channel_id_slack_ts_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "message_refs_source": {
+          "name": "message_refs_source",
+          "value": "\"message_refs\".\"source\" IN ('event', 'history')"
+        },
+        "message_refs_tombstone": {
+          "name": "message_refs_tombstone",
+          "value": "\"message_refs\".\"deleted_at\" IS NULL OR \"message_refs\".\"content_hash\" IS NULL"
+        }
+      }
+    },
     "messages": {
       "name": "messages",
       "columns": {
@@ -1438,6 +1674,135 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "slack_event_refs": {
+      "name": "slack_event_refs",
+      "columns": {
+        "event_ref": {
+          "name": "event_ref",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "team_id": {
+          "name": "team_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "slack_ts": {
+          "name": "slack_ts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "thread_ts": {
+          "name": "thread_ts",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "processed_at": {
+          "name": "processed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "slack_event_refs_event_id_unique": {
+          "name": "slack_event_refs_event_id_unique",
+          "columns": [
+            "event_id"
+          ],
+          "isUnique": true
+        },
+        "slack_event_refs_outcome": {
+          "name": "slack_event_refs_outcome",
+          "columns": [
+            "outcome",
+            "received_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "slack_event_refs_kind": {
+          "name": "slack_event_refs_kind",
+          "value": "\"slack_event_refs\".\"kind\" IN ('message', 'message_changed', 'message_deleted', 'member_joined', 'member_left', 'revoked', 'ignored')"
+        }
+      }
     },
     "slack_installations": {
       "name": "slack_installations",

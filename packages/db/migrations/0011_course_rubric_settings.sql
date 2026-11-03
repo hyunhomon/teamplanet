@@ -7,3 +7,5 @@ CREATE TABLE `course_rubric_settings` (
 	CONSTRAINT "course_rubric_version" CHECK("course_rubric_settings"."rubric_version" = 'communication-v1'),
 	CONSTRAINT "course_rubric_selection" CHECK(json_valid("course_rubric_settings"."selected_competencies_json") AND json_type("course_rubric_settings"."selected_competencies_json") = 'array' AND json_array_length("course_rubric_settings"."selected_competencies_json") BETWEEN 1 AND 4)
 );
+--> statement-breakpoint
+ALTER TABLE `courses` ADD `starts_at` integer;
