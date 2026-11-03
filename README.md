@@ -24,6 +24,7 @@
 - `docs/ARCHITECTURE.md` 모노레포 및 Cloudflare 구성
 - `docs/AI_ORCHESTRATION.md` 3단계 멀티모델 파이프라인
 - `docs/ANALYSIS_CONTRACT.md` 실행·참조 manifest·A/B/C 공유 계약과 독립 개발 fixture
+- `docs/EVIDENCE_EXTRACTION.md` A adapter·인용/이미지 검증·overlap 병합과 한계
 - `docs/EVALUATION_RUBRIC.md` 4개 역량·근거·평가 가드레일
 - `docs/SLACK_ONBOARDING.md` OAuth·채널/봇 설치·동의 마법사
 - `docs/SLACK_IMAGES.md` 동의·원본 재검증과 메모리 전용 이미지 입력

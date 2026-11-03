@@ -163,7 +163,15 @@ export async function withChunkInput<T>(deps: ImageDeps, runId: string, chunkId:
         const current = await db.prepare("SELECT file_revision, content_hash, limitation FROM image_refs WHERE channel_id = ? AND slack_ts = ? AND file_id = ?").bind(row.channel_id, row.slack_ts, attachment.fileId).first<any>();
         if (!current || current.file_revision !== attachment.fileRevision || current.content_hash !== attachment.hash || current.limitation !== attachment.limitation) return invalid();
       }
-      checks.push(memory.assertCurrent);
+      checks.push(async () => {
+        await memory.assertCurrent();
+        if (requestedFiles.length) await withMessageImages({ ...deps, requestedFileIds: requestedFiles }, { teamId: spec!.team_id, channelId: row.channel_id, slackTs: row.slack_ts }, async () => {
+          for (const attachment of attachments.filter(a => requestedFiles.includes(a.fileId))) {
+            const current = await db.prepare("SELECT file_revision, content_hash, limitation FROM image_refs WHERE channel_id = ? AND slack_ts = ? AND file_id = ?").bind(row.channel_id, row.slack_ts, attachment.fileId).first<any>();
+            if (!current || current.file_revision !== attachment.fileRevision || current.content_hash !== attachment.hash || current.limitation !== attachment.limitation) return invalid();
+          }
+        });
+      });
       for (const p of wanted.filter(p => p.messageId === row.id)) parts.push({ ...p, text: memory.source.text.slice(p.start, p.end), studentId: row.student_id, sentAt: new Date(Math.floor(Number(row.slack_ts) * 1000)).toISOString(),
         images: attachments.filter(a => p.imageIds.includes(a.id)).flatMap(a => { const image = memory.images.find(i => i.fileId === a.fileId); return image ? [{ id: a.id, dataUrl: image.dataUrl, studentId: image.studentId, limitations: image.limitations }] : []; }) });
       try { return await load(index + 1); } finally { for (const p of parts) { p.text = ""; for (const image of p.images) image.dataUrl = ""; } }

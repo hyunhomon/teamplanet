@@ -104,3 +104,13 @@ test("owner-only operation status exposes failures and prevents another professo
   await purgeTeam(f.db, f.teamId, f.now());
   expect((await (await call("data-status")).json() as any).purgedAt).not.toBeNull();
 });
+test("erasing one team preserves a shared student's audit history until the other team is also purged", async () => {
+  const other = "team_00000000-0000-4000-8000-000000000014";
+  f.sqlite.run("INSERT INTO teams (id, course_id, workspace_id, channel_id, name) VALUES (?, ?, ?, 'CSHAREDAUDIT', 'synthetic other team')", [other, f.course.id, f.workspace.id]);
+  f.sqlite.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [other, f.studentId, f.course.id, f.workspace.id]);
+  f.sqlite.run("INSERT INTO audit_events (actor_professor_id, action, target_type, target_id, result, recorded_at) VALUES (?, 'consent.set', 'student', ?, 'succeeded', 0)", [f.professor.id, f.studentId]);
+  await requestErasure(f.db, f.teamId, "request", f.now()); await purgeTeam(f.db, f.teamId, f.now());
+  expect(count("audit_events")).toBe(1);
+  await requestErasure(f.db, other, "request", f.now()); await purgeTeam(f.db, other, f.now());
+  expect(count("audit_events")).toBe(0);
+});

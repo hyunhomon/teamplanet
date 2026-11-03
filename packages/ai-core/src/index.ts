@@ -54,11 +54,13 @@ export async function requestOpenRouter(
   model: string,
   messages: Array<Record<string, unknown>>,
   fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+  options: { responseFormat?: Record<string, unknown> } = {},
 ) {
   const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, provider: providerPolicy, reasoning: { enabled: false } }),
+    body: JSON.stringify({ model, messages, provider: providerPolicy, reasoning: { enabled: false },
+      ...(options.responseFormat ? { response_format: options.responseFormat } : {}) }),
   });
   const rawBody = await res.text();
   let payload: unknown;
