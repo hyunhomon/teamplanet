@@ -89,6 +89,7 @@ export const consentConfirmationIssueResponseSchema = z.strictObject({ confirmat
 export const consentConfirmationLookupSchema = z.strictObject({ token: consentTokenSchema });
 export const consentConfirmationLookupResponseSchema = z.strictObject({
   courseName: nameSchema, teamName: nameSchema, studentDisplayName: nameSchema, version: versionSchema,
+  professorEmail: emailSchema,
   expiresAt: dateTimeSchema, confirmedAt: dateTimeSchema.nullable(),
 });
 export const consentConfirmSchema = z.strictObject({ token: consentTokenSchema, confirmed: z.literal(true) });

@@ -80,6 +80,18 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .check-label input { width: 20px; height: 20px; accent-color: #23634f; }
 .check-label small { display: block; color: #52695f; font-size: 13px; line-height: 1.8; }
 .setup-toolbar a { min-height: 44px; padding: 12px 0; text-decoration: underline; font-size: 14px; }
+.student-consent { max-width: 680px; }
+.student-consent h2 { font-weight: 600; font-size: 20px; margin-top: 24px; }
+.student-consent p, .student-consent dd { line-height: 1.9; overflow-wrap: anywhere; }
+.student-consent p { margin: 12px 0; }
+.student-consent > .button { margin-top: 12px; }
+.student-consent dl { margin-top: 24px; }
+.student-consent dt { color: #52695f; font-size: 13px; margin-top: 12px; }
+.student-consent dd { margin: 4px 0; font-size: 16px; }
+.student-consent .check-label, .consent-invitation .check-label { display: flex; align-items: flex-start; gap: 12px; line-height: 1.8; }
+.student-consent input[type=checkbox], .consent-invitation input[type=checkbox] { width: 22px; height: 22px; min-height: 22px; flex-shrink: 0; margin-top: 4px; }
+.consent-invitation img { width: min(240px, 100%); height: auto; background: white; }
+.consent-invitation a { overflow-wrap: anywhere; display: inline-block; padding: 12px 0; text-decoration: underline; }
 @media (max-width: 640px) {
   .workspace-page { padding: 0 20px; }
   .site-header { padding: 24px 0; }

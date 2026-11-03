@@ -299,3 +299,5 @@ HTTP API는 없다. 분석(#16)이 `slack.history` job(`{requestId, teamId, from
 Events 원문 참조 접수와 Consumer source 쓰기는 collectionWriteGuard를 같은 D1 batch의 첫 검사로 실행합니다. 현재 팀·허용 구간·전체 참가자/정확한 동의 이력·작성자 매핑이 변경되면 참조·checkpoint·처리 완료 쓰기 전체를 rollback하고 재시도/차단합니다. 미적용 Events migration은 동의 이력 FK migration 0008과 번호가 겹쳐 SQL 내용 보존 상태로 0009_brainy_scarlet_spider로 정리하고 통합 schema에서 metadata를 재생성했습니다.
 
 수업 초기 설정은 실제 startsAt·endsAt을 저장하고 소유 교수의 이메일을 서버에서 반환해 표시합니다. 시작/종료 역전은 거부하고 과거 클라이언트의 startsAt 생략은 기존 값을 보존합니다. 문의 기한 n은 #30, 학생 개인 QR은 #29에서 연결합니다. 0008 동의 FK·0009 Events·0010 History를 보존하고 설정 migration은 미적용 상태에서 0011로 재정합했습니다.
+
+학생 QR #29: 교수는 같은 수업 학생의 오프라인 동의를 Slack 가입 전에 기록할 수 있고, 본인 확인 후 개인 fragment 링크/QR을 직접 전달합니다. 미매핑 참가자는 API 활성화 및 최종 DB 쓰기 모두 차단합니다. 학생 조회는 현재 grant/정책/수업 유효성을 검증하고 담당 교수 이메일을 반환하며 교수 쿠키를 사용/발급하지 않습니다. 기존 원자적 링크 발급·학생 확인·수집 guard를 보존합니다. 자세한 절차는 STUDENT_CONFIRMATION.md를 따릅니다.

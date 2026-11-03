@@ -4,7 +4,7 @@ import {
   deactivateTeamSchema, setConsentSchema, teamParamsSchema, teamStudentParamsSchema,
   type ActivateTeamResponse, type CollectionStatusResponse, type Consent, type ConsentConfirmationLookupResponse, type CoursePilotResponse,
 } from "@teamplanet/contracts";
-import { currentHistorySql, pauseTeam, pilotReadySql, validConsentSql, type EndReason } from "@teamplanet/collection";
+import { currentHistorySql, participantsMappedSql, pauseTeam, pilotReadySql, validConsentSql, type EndReason } from "@teamplanet/collection";
 import { iso, randomToken, sha256 } from "./auth";
 import { apiError, parseBody } from "./errors";
 import { audit, owned } from "./guard";
@@ -106,8 +106,8 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     const { status, version, evidenceRef } = input.data;
     const db = context.env.DB;
     const team = await owned<TeamRow>(context, "team", teamId);
-    const member = team && await db.prepare("SELECT 1 FROM team_members WHERE team_id = ? AND student_id = ?").bind(teamId, studentId).first();
-    if (!team || !member) {
+    const student = team && await owned<{ course_id: string }>(context, "student", studentId);
+    if (!team || !student || student.course_id !== team.course_id) {
       await audit(context, { action: "consent.set", targetType: "student", targetId: studentId, result: "denied" }, now).run();
       return notFound(context);
     }
@@ -134,6 +134,9 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     ];
     // Any change away from a valid grant stops collection at once; re-activation re-checks everyone.
     if (status !== "granted") writes.push(...pauseTeam(db, teamId, "consent_changed", at));
+    if (!await db.prepare("SELECT 1 FROM team_members WHERE team_id = ? AND student_id = ?").bind(teamId, studentId).first()) {
+      writes.push(...pauseTeam(db, teamId, "unknown_participant", at));
+    }
     await db.batch(writes);
     return context.json(toConsent((await read())!), 200);
   });
@@ -167,9 +170,9 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
   // Student side, no professor session (guard.ts exempts /v1/consent-confirmations/). The personal token is the only key.
   // Only a link whose grant is still current is answered at all; otherwise nothing about the student or course comes back.
   const confirmationRow = async (context: Context<SlackEnv>, token: string) => context.env.DB.prepare(`SELECT k.*, c.name AS course_name,
-      t.name AS team_name, s.display_name FROM consent_confirmations k JOIN teams t ON t.id = k.team_id JOIN courses c ON c.id = t.course_id
-      JOIN students s ON s.id = k.student_id WHERE k.token_hash = ? AND ${currentLinkSql("k")}`).bind(await sha256(token), now())
-    .first<{ version: string; expires_at: number; confirmed_at: number | null; course_name: string; team_name: string; display_name: string }>();
+      t.name AS team_name, s.display_name, p.email AS professor_email FROM consent_confirmations k JOIN teams t ON t.id = k.team_id JOIN courses c ON c.id = t.course_id
+      JOIN students s ON s.id = k.student_id AND s.course_id = c.id JOIN professors p ON p.id = c.professor_id WHERE k.token_hash = ? AND ${currentLinkSql("k")}`).bind(await sha256(token), now())
+    .first<{ version: string; expires_at: number; confirmed_at: number | null; course_name: string; team_name: string; display_name: string; professor_email: string }>();
 
   routes.post("/consent-confirmations/lookup", async context => {
     const input = await parseBody(context, consentConfirmationLookupSchema);
@@ -177,7 +180,7 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     const row = await confirmationRow(context, input.data.token);
     if (!row || (row.confirmed_at === null && row.expires_at <= now())) return notFound(context);
     return context.json({
-      courseName: row.course_name, teamName: row.team_name, studentDisplayName: row.display_name, version: row.version,
+      courseName: row.course_name, teamName: row.team_name, studentDisplayName: row.display_name, version: row.version, professorEmail: row.professor_email,
       expiresAt: iso(row.expires_at), confirmedAt: row.confirmed_at === null ? null : iso(row.confirmed_at),
     } satisfies ConsentConfirmationLookupResponse, 200);
   });
@@ -215,6 +218,8 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
       await audit(context, { action: "team.activate", targetType: "team", targetId: teamId, result: "denied" }, now).run();
       return response;
     };
+    const mapped = await db.prepare(`SELECT ${participantsMappedSql("?")} AS mapped`).bind(teamId).first<{ mapped: number }>();
+    if (!mapped?.mapped) return denied(apiError(context, "CHANNEL_MEMBERSHIP_REQUIRED", "모든 참가자의 Slack 계정 매핑이 필요합니다."));
     const existing = team.collection_status === "active" ? await openWindow() : null;
     if (existing) return answer(existing);
 
@@ -231,6 +236,7 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     await db.batch([
       db.prepare(`UPDATE teams SET collection_status = 'active' WHERE id = ? AND collection_status <> 'active'
         AND ${pilotReadySql("teams.course_id", "?")}
+        AND ${participantsMappedSql("teams.id")}
         AND EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = teams.id)
         AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = teams.id AND NOT ${validConsentSql("m.team_id", "m.student_id")})`)
         .bind(teamId, at),
