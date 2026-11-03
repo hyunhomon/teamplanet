@@ -1,6 +1,6 @@
 # Queue 실행·복구 계약
 
-#10은 공통 실행 기반이다. 실제 Slack 수집(#11/#12)·AI 분석(#16/#20) handler는 아직 등록하지 않는다. 현재 등록된 `system.probe`는 합성 체크포인트만 저장하며 메일/Slack/AI/학생 데이터에 접근하지 않는다.
+#10은 공통 실행 기반이다. `slack.event` handler는 #11에서 등록했다(API_CONTRACT.md "Slack Events 수신"). `slack.history`(History 보정)는 #12에서 등록했다. AI 분석(#16/#20) handler는 아직 등록하지 않는다. 현재 등록된 `system.probe`는 합성 체크포인트만 저장하며 메일/Slack/AI/학생 데이터에 접근하지 않는다.
 
 ## 구성과 envelope
 
@@ -18,6 +18,7 @@
 |---|---|---|
 | `system.probe` | `probeId`: UUIDv4 | `probe:<probeId>` |
 | `slack.event` | `workspaceId`, `eventId` (`Ev…`), `eventRef` (`event_<UUIDv4>`) | `event:<workspaceId>:<eventId>` |
+| `slack.history` | `requestId` (UUIDv4), `teamId`, `fromMs`, `toMs` (epoch ms, from < to) | `history:<teamId>:<requestId>` |
 | `analysis.stage` | `runId` (`run_<UUIDv4>`), `stage`, `chunkId` | `run:<runId>:<stage>:<chunkId>` |
 
 stage는 `collecting | evidence_extraction | assessment | review`, chunkId는 1–100자 영숫자/`_`/`-`이다. generation은 0으로 시작하고 검토된 복구 시에만 증가한다. 이벤트 원문은 동의·서명 검증을 통과한 저장소의 eventRef에서, 분석 입력은 run/chunk에서 읽는다. 큐와 원장에는 메시지 본문·이미지 원본·토큰·OTP를 복사하지 않는다. 이후 수집 저장소·동의 정책을 이 계약만으로 구현한 것으로 간주하지 않는다.

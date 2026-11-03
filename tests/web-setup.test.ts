@@ -16,7 +16,7 @@ function fixture() {
     "slack/connection": { status: "connected", workspace: { ...workspace, name: "합성 워크스페이스", installedAt: "2026-10-26T00:00:00.000Z", createdAt: undefined }, missingScopes: [] },
     courses: course.list, teams: team.list,
     [`courses/${course.response.id}/students`]: student.list,
-    [`courses/${course.response.id}/pilot`]: { courseId: course.response.id, consentVersion: consent.grant.version, endsAt: "2027-02-28T00:00:00.000Z", policyApproved: true },
+    [`courses/${course.response.id}/pilot`]: { courseId: course.response.id, professorEmail: "professor-a@example.invalid", startsAt: "2026-10-01T00:00:00.000Z", consentVersion: consent.grant.version, endsAt: "2027-02-28T00:00:00.000Z", policyApproved: true },
     [`courses/${course.response.id}/rubric`]: { courseId: course.response.id, selection: null, updatedAt: null },
     [`teams/${team.response.id}/members`]: team.members,
     [`teams/${team.response.id}/membership`]: { teamId: team.response.id, checkedAt: "2026-10-26T00:00:00.000Z", botInChannel: true, members: [{ ...team.members.members[0], inChannel: true }], unmappedChannelMembers: [], complete: true },

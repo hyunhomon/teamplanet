@@ -11,21 +11,24 @@ export type GateBlock =
   | "team_inactive" | "policy_not_approved" | "course_ended" | "outside_window" | "unknown_participant" | "consent_missing";
 export type GateResult = { allowed: true; studentId?: string } | { allowed: false; reason: GateBlock };
 
+/** SQL: the consent_history row behind the student's current consent state (the triggers write one row per change). */
+export const currentHistorySql = (team: string, student: string) =>
+  `(SELECT MAX(h.id) FROM consent_history h WHERE h.team_id = ${team} AND h.student_id = ${student})`;
+/** Offline consent may precede mapping; collection may not. */
+export const participantsMappedSql = (team: string) => `NOT EXISTS (
+  SELECT 1 FROM consents p WHERE p.team_id = ${team} AND NOT EXISTS (
+    SELECT 1 FROM team_members m WHERE m.team_id = p.team_id AND m.student_id = p.student_id))`;
 /**
  * SQL predicate: the student has a valid consent right now. Granted, on the course's current form version,
- * and re-confirmed by the student (QR) with a confirmation issued after that grant.
+ * and re-confirmed by the student (QR) on a link issued for exactly this grant. Links from before a withdrawal
+ * or re-grant point at an older history row and no longer count, even when the timestamps are equal.
  */
 export const validConsentSql = (team: string, student: string) => `EXISTS (
   SELECT 1 FROM consents cs JOIN teams vt ON vt.id = cs.team_id JOIN courses vc ON vc.id = vt.course_id
   WHERE cs.team_id = ${team} AND cs.student_id = ${student} AND cs.status = 'granted' AND cs.version = vc.consent_version
     AND EXISTS (SELECT 1 FROM consent_confirmations k WHERE k.team_id = cs.team_id AND k.student_id = cs.student_id
-      AND k.version = cs.version AND k.confirmed_at IS NOT NULL AND k.created_at >= cs.recorded_at
-      AND k.consent_history_id = (SELECT MAX(h.id) FROM consent_history h WHERE h.team_id = cs.team_id AND h.student_id = cs.student_id)))`;
-
-/** Offline participants may precede Slack membership, but collection never may. */
-export const participantsMappedSql = (team: string) => `NOT EXISTS (
-  SELECT 1 FROM consents p WHERE p.team_id = ${team} AND NOT EXISTS (
-    SELECT 1 FROM team_members m WHERE m.team_id = p.team_id AND m.student_id = p.student_id))`;
+      AND k.version = cs.version AND k.confirmed_at IS NOT NULL
+      AND k.consent_history_id = ${currentHistorySql("cs.team_id", "cs.student_id")}))`;
 /** SQL predicate: the course's form version is operator-approved and the course has not ended. */
 export const pilotReadySql = (course: string, now: string) => `EXISTS (
   SELECT 1 FROM courses pc JOIN consent_policies pp ON pp.version = pc.consent_version
@@ -60,6 +63,15 @@ export async function collectionGate(
   return { allowed: true, studentId: member.student_id };
 }
 
+/**
+ * A statement to put first in a write batch. It aborts the whole batch unless, at that moment, the team still collects
+ * (active, approved form, course not ended) and every given author still has a valid consent, which closes the gap
+ * between a gate check and its writes. SQLite has no RAISE outside triggers, so json() on a non-JSON string aborts.
+ */
+export function stillCollectable(db: D1Database, teamId: string, authors: Iterable<string>, now: number): D1PreparedStatement {
+  return collectionWriteGuard(db, { teamId, from: now, now, authors: [...new Set(authors)] });
+}
+
 /** Statements that stop collection for a team and close its open window. Safe to repeat; batch them with the cause. */
 export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at: number): D1PreparedStatement[] {
   return [
@@ -68,3 +80,27 @@ export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at:
     db.prepare("UPDATE teams SET collection_status = 'paused' WHERE id = ? AND collection_status = 'active'").bind(teamId),
   ];
 }
+
+/** First statement of the SAME D1 batch as source writes/checkpoints; rejection rolls back the entire batch. */
+export function collectionWriteGuard(db: D1Database, input: {
+  teamId: string; from: number; to?: number; now: number; authors?: readonly string[];
+}): D1PreparedStatement {
+  // SQLite json() deliberately aborts the transaction on a closed gate (RAISE is trigger-only).
+  return db.prepare(`SELECT json(CASE WHEN EXISTS (
+    SELECT 1 FROM teams t WHERE t.id = ? AND t.collection_status = 'active'
+      AND ${pilotReadySql("t.course_id", "?")}
+      AND EXISTS (SELECT 1 FROM collection_windows w WHERE w.team_id = t.id AND w.started_at <= ?
+        AND (w.ended_at IS NULL OR (w.ended_at > ? AND w.ended_at >= ?)))
+      AND ${participantsMappedSql("t.id")}
+      AND EXISTS (SELECT 1 FROM team_members WHERE team_id = t.id)
+      AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = t.id AND NOT ${validConsentSql("m.team_id", "m.student_id")})
+      AND NOT EXISTS (SELECT 1 FROM json_each(?) author WHERE NOT EXISTS (
+        SELECT 1 FROM team_members m JOIN student_slack_mappings s ON s.student_id = m.student_id
+        WHERE m.team_id = t.id AND s.slack_user_id = author.value)))
+    THEN '1' ELSE 'collection_gate_closed' END)`)
+    .bind(input.teamId, input.now, input.from, input.from, input.to ?? input.from, JSON.stringify(input.authors ?? []));
+}
+
+export * from "./events";
+export * from "./slack";
+export * from "./history";

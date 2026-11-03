@@ -95,6 +95,21 @@ const activate = (cookie: string, body: unknown = {}) => call(`/teams/${TEAM}/ac
 const status = async (cookie: string) => collectionStatusResponseSchema.parse(await (await call(`/teams/${TEAM}/collection`, cookie)).json());
 const audits = (action: string) => database.sqlite.query("SELECT result FROM audit_events WHERE action = ? ORDER BY id").all(action).map(r => (r as { result: string }).result);
 
+test("a known author's consent cannot hide another unconfirmed team participant", async () => {
+  const cookie = await login(profA!.email);
+  await setPilot(cookie);
+  await setConsent(cookie, "granted");
+  await studentConfirms(cookie);
+  await activate(cookie);
+  const other = "student_00000000-0000-4000-8000-0000000000a2";
+  database.sqlite.run("INSERT INTO students VALUES (?, ?, '합성 추가 참가자', 0)", [other, courseA!.id]);
+  database.sqlite.run("INSERT INTO slack_users VALUES (?, 'USYNTHSTU2')", [WORKSPACE.id]);
+  database.sqlite.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, 'USYNTHSTU2')", [other, courseA!.id, WORKSPACE.id]);
+  database.sqlite.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, other, courseA!.id, WORKSPACE.id]);
+  expect(await collectionGate(database.db, { teamId: TEAM, at: clock, now: clock, slackUserId: USER }))
+    .toEqual({ allowed: false, reason: "consent_missing" });
+});
+
 test("pilot settings need an operator-approved form version and a future course end", async () => {
   const cookie = await login(profA!.email);
   expect(await code(await setPilot(cookie, "synthetic-policy-v1"))).toBe("POLICY_NOT_APPROVED"); // the fixture version is not approved
@@ -148,7 +163,9 @@ test("consent → withdraw → re-consent keeps history, closes and reopens wind
   clock += HOUR;
   const regranted = consentSchema.parse(await (await setConsent(cookie, "granted", { evidenceRef: "form-0002" })).json());
   expect(regranted.studentConfirmedAt).toBeNull(); // the first confirmation belonged to the first grant
-  expect((await call("/consent-confirmations/confirm", undefined, { token: firstToken, confirmed: true })).status).toBe(404); // old grant is no longer valid
+  // The old, already confirmed link belongs to the first grant: neither confirm nor lookup answers it any more.
+  expect((await call("/consent-confirmations/confirm", undefined, { token: firstToken, confirmed: true })).status).toBe(404);
+  expect((await call("/consent-confirmations/lookup", undefined, { token: firstToken })).status).toBe(404);
   expect(await code(await activate(cookie))).toBe("CONSENT_REQUIRED");
   await studentConfirms(cookie);
   clock += 1000;
@@ -223,83 +240,48 @@ test("student confirmation links are personal, single use, expire, and die with 
   expect(consents.consents[0]!.studentConfirmedAt).toBeNull();
 });
 
-test("same-clock withdrawal and regrant cannot revive a previously confirmed personal link", async () => {
+test("grant → confirm → withdraw → grant at the same instant still needs a new confirmation", async () => {
   const cookie = await login(profA!.email);
-  await setPilot(cookie); await setConsent(cookie, "granted");
+  await setPilot(cookie);
+  await setConsent(cookie, "granted");
   const token = await studentConfirms(cookie);
+  // The clock does not move: recorded_at and created_at are all equal, only the history row tells the grants apart.
   await setConsent(cookie, "withdrawn", {});
-  await setConsent(cookie, "granted", { evidenceRef: "new-paper-synthetic" });
-  expect((await call("/consent-confirmations/lookup", undefined, { token })).status).toBe(404);
-  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(404);
-  const list = await (await call(`/teams/${TEAM}/consents`, cookie)).json() as { consents: { studentConfirmedAt: string | null }[] };
-  expect(list.consents[0]!.studentConfirmedAt).toBeNull();
+  await setConsent(cookie, "granted", { evidenceRef: "form-0002" });
+  expect(consentSchema.parse((await (await call(`/teams/${TEAM}/consents`, cookie)).json() as { consents: unknown[] }).consents[0]).studentConfirmedAt).toBeNull();
   expect(await code(await activate(cookie))).toBe("CONSENT_REQUIRED");
-});
-
-test("legacy confirmations without a grant-history binding cannot authorize collection", async () => {
-  const cookie = await login(profA!.email); await setPilot(cookie); await setConsent(cookie, "granted");
-  const token = await studentConfirms(cookie); await activate(cookie);
-  database.sqlite.run("UPDATE consent_confirmations SET consent_history_id = NULL");
-  expect((await call("/consent-confirmations/lookup", undefined, { token })).status).toBe(404);
-  expect(await collectionGate(database.db, { teamId: TEAM, at: clock, now: clock })).toEqual({ allowed: false, reason: "consent_missing" });
-});
-
-test("withdrawal immediately before the confirmation write blocks both the write and replay", async () => {
-  const cookie = await login(profA!.email); await setPilot(cookie); await setConsent(cookie, "granted");
-  const issued = consentConfirmationIssueResponseSchema.parse(await (await call(`/teams/${TEAM}/consents/${STUDENT}/confirmation`, cookie, {})).json());
-  const token = new URL(issued.confirmationUrl).hash.slice(1);
-  const real = database.db;
-  env = { ...env, DB: {
-    prepare: (sql: string) => {
-      if (sql.startsWith("UPDATE consent_confirmations SET confirmed_at")) database.sqlite.run("UPDATE consents SET status = 'withdrawn' WHERE team_id = ?", [TEAM]);
-      return real.prepare(sql);
-    }, batch: (statements: Parameters<typeof real.batch>[0]) => real.batch(statements),
-  } as unknown as Bindings["DB"] };
+  expect(await collectionGate(database.db, { teamId: TEAM, at: clock, now: clock, slackUserId: USER })).toMatchObject({ allowed: false });
   expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(404);
-  expect(database.sqlite.query("SELECT confirmed_at FROM consent_confirmations").get()).toEqual({ confirmed_at: null });
-  env = { ...env, DB: real };
-});
-
-test("offline consent and personal confirmation precede Slack mapping, while collection waits for every participant", async () => {
-  const cookie = await login(profA!.email);
-  await setPilot(cookie); await setConsent(cookie, "granted"); await studentConfirms(cookie); await activate(cookie);
-  const waiting = "student_00000000-0000-4000-8000-0000000000b1";
-  database.sqlite.run("INSERT INTO students (id, course_id, display_name, created_at) VALUES (?, ?, '합성 가입 전 학생', 0)", [waiting, courseA!.id]);
-  const base = `/teams/${TEAM}/consents/${waiting}`;
-  const before = slackCalls.length;
-  expect((await call(base, cookie, { status: "granted", version: FORM, evidenceRef: "pre-slack-synthetic" }, "PUT")).status).toBe(200);
-  const issued = consentConfirmationIssueResponseSchema.parse(await (await call(`${base}/confirmation`, cookie, {})).json());
-  const token = new URL(issued.confirmationUrl).hash.slice(1);
-  const details = consentConfirmationLookupResponseSchema.parse(await (await call("/consent-confirmations/lookup", undefined, { token })).json());
-  expect(details.professorEmail).toBe(profA!.email);
-  expect(details.studentDisplayName).toBe("합성 가입 전 학생");
-  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(200);
-  expect(slackCalls.length).toBe(before); // No membership requirement or message read before confirmation.
-  expect((await status(cookie)).collectionStatus).toBe("paused");
-  expect(await code(await activate(cookie))).toBe("CHANNEL_MEMBERSHIP_REQUIRED");
-  database.sqlite.run("INSERT INTO slack_users VALUES (?, 'USYNTHPRE1')", [WORKSPACE.id]);
-  database.sqlite.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, 'USYNTHPRE1')", [waiting, courseA!.id, WORKSPACE.id]);
-  database.sqlite.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, waiting, courseA!.id, WORKSPACE.id]);
-  channelMembers.push("USYNTHPRE1");
+  await studentConfirms(cookie);
   expect((await activate(cookie)).status).toBe(200);
 });
 
-test("reissue invalidates old unused links; strict student requests cannot change the target or gain professor access", async () => {
-  const cookie = await login(profA!.email); await setPilot(cookie); await setConsent(cookie, "granted");
-  const issue = async () => new URL(consentConfirmationIssueResponseSchema.parse(await (await call(`/teams/${TEAM}/consents/${STUDENT}/confirmation`, cookie, {})).json()).confirmationUrl).hash.slice(1);
-  const old = await issue(), token = await issue();
-  expect((await call("/consent-confirmations/lookup", undefined, { token: old })).status).toBe(404);
-  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true, studentId: STUDENT })).status).toBe(400);
-  const confirmed = await call("/consent-confirmations/confirm", undefined, { token, confirmed: true });
-  expect(confirmed.status).toBe(200); expect(confirmed.headers.get("set-cookie")).toBeNull();
-  const repeated = await call("/consent-confirmations/confirm", undefined, { token, confirmed: true });
-  expect(await repeated.json()).toEqual(await confirmed.json());
-  expect((await call("/courses", undefined, undefined, "GET")).status).toBe(401);
-  const historyCount = (database.sqlite.query("SELECT count(*) AS n FROM consent_history").get() as { n: number }).n;
-  expect(historyCount).toBe(1);
+test("a confirmed link stops answering once its grant is withdrawn, the form changes or the course ends", async () => {
+  const cookie = await login(profA!.email);
+  await setPilot(cookie);
+  await setConsent(cookie, "granted");
+  const lookup = (token: string) => call("/consent-confirmations/lookup", undefined, { token });
+  const confirm = (token: string) => call("/consent-confirmations/confirm", undefined, { token, confirmed: true });
+
+  const withdrawnToken = await studentConfirms(cookie);
+  expect((await lookup(withdrawnToken)).status).toBe(200);
+  await setConsent(cookie, "withdrawn", {});
+  for (const response of [await lookup(withdrawnToken), await confirm(withdrawnToken)]) {
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain("합성 학생");
+  }
+
+  clock += 1000;
+  await setConsent(cookie, "granted", { evidenceRef: "form-0002" });
+  const formToken = await studentConfirms(cookie);
   await setPilot(cookie, "pilot-form-v2");
-  expect((await call("/consent-confirmations/lookup", undefined, { token })).status).toBe(404);
-  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(404);
+  expect([(await lookup(formToken)).status, (await confirm(formToken)).status]).toEqual([404, 404]);
+  await setPilot(cookie);
+  expect((await lookup(formToken)).status).toBe(200); // back on the form it was issued for
+
+  database.sqlite.run("UPDATE courses SET ends_at = ? WHERE id = ?", [clock, courseA!.id]);
+  expect([(await lookup(formToken)).status, (await confirm(formToken)).status]).toEqual([404, 404]);
+  expect(await code(await call(`/teams/${TEAM}/consents/${STUDENT}/confirmation`, cookie, {}))).toBe("CONSENT_REQUIRED");
 });
 
 test("changing the course form version or deactivating stops collection; the gate follows", async () => {
@@ -325,3 +307,103 @@ test("changing the course form version or deactivating stops collection; the gat
   expect(stopped.windows.map(w => w.endReason)).toEqual(["policy_changed", "professor"]);
   expect(audits("team.deactivate")).toEqual(["succeeded"]);
 });
+
+
+test("pilot setup persists the real start and returns the owning professor contact", async () => {
+ const cookie=await login(profA!.email);
+ const startsAt=new Date(clock-DAY).toISOString();
+ const endsAt=new Date(clock+60*DAY).toISOString();
+ const path=`/courses/${courseA!.id}/pilot`;
+ const response=await call(path,cookie,{consentVersion:FORM,startsAt,endsAt},"PUT");
+ expect(response.status).toBe(200);
+ expect(await response.json()).toMatchObject({startsAt,endsAt,professorEmail:profA!.email});
+ expect(await (await call(path,cookie)).json()).toMatchObject({startsAt,professorEmail:profA!.email});
+ expect((await call(path,cookie,{consentVersion:FORM,startsAt:endsAt,endsAt},"PUT")).status).toBe(400);
+ // Legacy callers cannot erase the configured real start by omitting the optional field.
+ await setPilot(cookie);
+ expect(await (await call(path,cookie)).json()).toMatchObject({startsAt});
+});
+
+test("same-clock withdrawal and regrant cannot revive a previously confirmed personal link", async () => {
+  const cookie = await login(profA!.email);
+  await setPilot(cookie); await setConsent(cookie, "granted");
+  const token = await studentConfirms(cookie);
+  await setConsent(cookie, "withdrawn", {});
+  await setConsent(cookie, "granted", { evidenceRef: "new-paper-synthetic" });
+  expect((await call("/consent-confirmations/lookup", undefined, { token })).status).toBe(404);
+  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(404);
+  const list = await (await call(`/teams/${TEAM}/consents`, cookie)).json() as { consents: { studentConfirmedAt: string | null }[] };
+  expect(list.consents[0]!.studentConfirmedAt).toBeNull();
+  expect(await code(await activate(cookie))).toBe("CONSENT_REQUIRED");
+});
+
+
+test("legacy confirmations without a grant-history binding cannot authorize collection", async () => {
+  const cookie = await login(profA!.email); await setPilot(cookie); await setConsent(cookie, "granted");
+  const token = await studentConfirms(cookie); await activate(cookie);
+  database.sqlite.run("UPDATE consent_confirmations SET consent_history_id = NULL");
+  expect((await call("/consent-confirmations/lookup", undefined, { token })).status).toBe(404);
+  expect(await collectionGate(database.db, { teamId: TEAM, at: clock, now: clock })).toEqual({ allowed: false, reason: "consent_missing" });
+});
+
+
+test("withdrawal immediately before the confirmation write blocks both the write and replay", async () => {
+  const cookie = await login(profA!.email); await setPilot(cookie); await setConsent(cookie, "granted");
+  const issued = consentConfirmationIssueResponseSchema.parse(await (await call(`/teams/${TEAM}/consents/${STUDENT}/confirmation`, cookie, {})).json());
+  const token = new URL(issued.confirmationUrl).hash.slice(1);
+  const real = database.db;
+  env = { ...env, DB: {
+    prepare: (sql: string) => {
+      if (sql.startsWith("UPDATE consent_confirmations SET confirmed_at")) database.sqlite.run("UPDATE consents SET status = 'withdrawn' WHERE team_id = ?", [TEAM]);
+      return real.prepare(sql);
+    }, batch: (statements: Parameters<typeof real.batch>[0]) => real.batch(statements),
+  } as unknown as Bindings["DB"] };
+  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(404);
+  expect(database.sqlite.query("SELECT confirmed_at FROM consent_confirmations").get()).toEqual({ confirmed_at: null });
+  env = { ...env, DB: real };
+});
+
+
+test("offline consent and personal confirmation precede Slack mapping, while collection waits for every participant", async () => {
+  const cookie = await login(profA!.email);
+  await setPilot(cookie); await setConsent(cookie, "granted"); await studentConfirms(cookie); await activate(cookie);
+  const waiting = "student_00000000-0000-4000-8000-0000000000b1";
+  database.sqlite.run("INSERT INTO students (id, course_id, display_name, created_at) VALUES (?, ?, '합성 가입 전 학생', 0)", [waiting, courseA!.id]);
+  const base = `/teams/${TEAM}/consents/${waiting}`;
+  const before = slackCalls.length;
+  expect((await call(base, cookie, { status: "granted", version: FORM, evidenceRef: "pre-slack-synthetic" }, "PUT")).status).toBe(200);
+  const issued = consentConfirmationIssueResponseSchema.parse(await (await call(`${base}/confirmation`, cookie, {})).json());
+  const token = new URL(issued.confirmationUrl).hash.slice(1);
+  const details = consentConfirmationLookupResponseSchema.parse(await (await call("/consent-confirmations/lookup", undefined, { token })).json());
+  expect(details.professorEmail).toBe(profA!.email);
+  expect(details.studentDisplayName).toBe("합성 가입 전 학생");
+  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(200);
+  expect(slackCalls.length).toBe(before); // No membership requirement or message read before confirmation.
+  expect((await status(cookie)).collectionStatus).toBe("paused");
+  expect(await code(await activate(cookie))).toBe("CHANNEL_MEMBERSHIP_REQUIRED");
+  database.sqlite.run("INSERT INTO slack_users VALUES (?, 'USYNTHPRE1')", [WORKSPACE.id]);
+  database.sqlite.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, 'USYNTHPRE1')", [waiting, courseA!.id, WORKSPACE.id]);
+  database.sqlite.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, waiting, courseA!.id, WORKSPACE.id]);
+  channelMembers.push("USYNTHPRE1");
+  expect((await activate(cookie)).status).toBe(200);
+});
+
+
+test("reissue invalidates old unused links; strict student requests cannot change the target or gain professor access", async () => {
+  const cookie = await login(profA!.email); await setPilot(cookie); await setConsent(cookie, "granted");
+  const issue = async () => new URL(consentConfirmationIssueResponseSchema.parse(await (await call(`/teams/${TEAM}/consents/${STUDENT}/confirmation`, cookie, {})).json()).confirmationUrl).hash.slice(1);
+  const old = await issue(), token = await issue();
+  expect((await call("/consent-confirmations/lookup", undefined, { token: old })).status).toBe(404);
+  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true, studentId: STUDENT })).status).toBe(400);
+  const confirmed = await call("/consent-confirmations/confirm", undefined, { token, confirmed: true });
+  expect(confirmed.status).toBe(200); expect(confirmed.headers.get("set-cookie")).toBeNull();
+  const repeated = await call("/consent-confirmations/confirm", undefined, { token, confirmed: true });
+  expect(await repeated.json()).toEqual(await confirmed.json());
+  expect((await call("/courses", undefined, undefined, "GET")).status).toBe(401);
+  const historyCount = (database.sqlite.query("SELECT count(*) AS n FROM consent_history").get() as { n: number }).n;
+  expect(historyCount).toBe(1);
+  await setPilot(cookie, "pilot-form-v2");
+  expect((await call("/consent-confirmations/lookup", undefined, { token })).status).toBe(404);
+  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(404);
+});
+

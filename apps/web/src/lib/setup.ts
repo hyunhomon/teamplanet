@@ -158,6 +158,7 @@ export function activationReasons(state: SetupState, now = Date.now()) {
   const reasons: string[] = [];
   if (state.busy || state.error || !state.collection) reasons.push("최신 설정 상태를 다시 조회하세요.");
   if (state.connection?.status !== "connected") reasons.push("Slack 연결과 권한을 확인하세요.");
+  if (!state.pilot?.startsAt) reasons.push("실제 수업 시작일을 설정하세요.");
   if (!state.pilot?.policyApproved || !state.pilot.endsAt || Date.parse(state.pilot.endsAt) <= now) reasons.push("승인된 동의서와 미래의 수업 종료일이 필요합니다.");
   if (!state.membership?.complete) reasons.push("봇·학생 참여 또는 미매핑 계정을 확인하세요.");
   if (state.consents.some(c => !state.members.some(m => m.studentId === c.studentId))) reasons.push("오프라인 참가자의 Slack 매핑을 완료하세요.");

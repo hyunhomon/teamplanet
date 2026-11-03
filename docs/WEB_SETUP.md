@@ -27,3 +27,7 @@
 `bun test tests/web-setup.test.ts`로 조회 복원, 학생 재확인 gate, 실제 활성화 성공/거부, 다른 팀 응답 거부, 수동 초대, 중복 요청·dispose 경합, 세션 제거, 안전한 URL 복원을 검증한다. 브라우저 검증은 API를 가로채는 합성 응답만 사용한다.
 
 선택 역량은 `apps/api/src/course-rubric.test.ts`에서 실제 메모리 SQLite와 인증 세션으로 정상 저장/조회, 미설정 null, 타 교수/없는 수업 거부, 잘못된 선택/위조 소유자 거부, Origin/세션 검사, 감사 실패 시 롤백, 기존 run·평가·동의 이력 보존을 검증한다. 로컬 D1 `verify:upgrade`는 migration 0010 적용과 반복 적용 뒤 선택 설정 보존도 확인한다. 브라우저에서는 빈 선택 저장 거부, 두 역량만 명시 저장, 새로고침 뒤 정확히 두 항목 복원과 수집 상태/분석 실행 준비 상태의 구분을 확인했다.
+
+수업 초기 설정은 실제 startsAt·endsAt을 저장하고 소유 교수의 이메일을 서버에서 반환해 표시합니다. 시작/종료 역전은 거부하고 과거 클라이언트의 startsAt 생략은 기존 값을 보존합니다. 문의 기한 n은 #30, 학생 개인 QR은 #29에서 연결합니다. 0008 동의 FK·0009 Events·0010 History를 보존하고 설정 migration은 미적용 상태에서 0011로 재정합했습니다.
+
+통합 과정에서 학생 확인 FK는 선행 #8의 migration 0008로 이미 적용되어, 미적용 draft의 중복 ADD COLUMN migration은 제거했습니다. 0009 Events·0010 History·0011 수업 설정과 전체 schema/snapshot을 보존하고 SQL을 재적용하지 않습니다.

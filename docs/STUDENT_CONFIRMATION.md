@@ -16,7 +16,7 @@
 
 ## 동의 이력과 수집 보호
 
-Migration `0011_cynical_vapor.sql`은 `consent_confirmations.consent_history_id` nullable FK만 추가하며 기존 SQL·행·트리거를 삭제하지 않는다. 새 링크는 발급 대상 grant의 정확한 history ID에 연결한다. 같은 밀리초의 철회→재동의도 이전 링크를 재사용할 수 없다. 조회·확인·재사용·수집 guard는 현재 grant/버전/정책과 이력 일치를 검증한다.
+Migration `0008_high_lilandra.sql`은 `consent_confirmations.consent_history_id` nullable FK만 추가하며 기존 SQL·행·트리거를 삭제하지 않는다. 새 링크는 발급 대상 grant의 정확한 history ID에 연결한다. 같은 밀리초의 철회→재동의도 이전 링크를 재사용할 수 없다. 조회·확인·재사용·수집 guard는 현재 grant/버전/정책과 이력 일치를 검증한다.
 
 이전 링크의 NULL history ID는 추정해 채우지 않는다. 개인정보·동의 이력을 보존하면서 해당 링크를 거부하므로 교수의 재발급과 학생 재확인이 필요하다. 현재 grant로 확인된 링크만 제한된 중복 조회/제출을 허용한다. 원래 링크 만료는 이미 완료된 동의를 7일 뒤 취소하는 의미가 아니며 철회·정책 변경·수업 종료는 별도로 차단한다.
 
@@ -24,8 +24,10 @@ Slack 가입 전 참가자는 동의 기록으로 팀에 연결한다. 이 참�
 
 ## 개발·검증 및 병합 순서
 
-이 브랜치는 최신 origin/main에서 만들고, 요청된 PR 기준 개발을 위해 #42의 누적 코드를 포함했다. #34→#35→#37→#38→#39, #36, #42를 먼저 검토·병합해야 한다. main 대상 diff에는 선행 변경도 포함되므로 Draft를 먼저 병합하지 않는다. #40/#41이 먼저 병합되면 migration 0010/0011 snapshot과 journal을 해당 schema와 재정합해야 한다.
+이 브랜치는 최신 origin/main에서 만들고, 요청된 PR 기준 개발을 위해 #42의 누적 코드를 포함했다. #34→#35→#37→#38→#39, #36, #42를 먼저 검토·병합해야 한다. main 대상 diff에는 선행 변경도 포함되므로 Draft를 먼저 병합하지 않는다. #40/#41이 먼저 병합되면 migration 0008/0011 snapshot과 journal을 해당 schema와 재정합해야 한다.
 
 #14의 보관 만료 정리는 새 FK를 고려해 개인 확인 링크의 참조를 먼저 정리한 뒤 해당 동의 이력을 삭제해야 한다. 정상 동의 변경에서는 이력을 삭제하지 않는다. FK를 우회하거나 audit이라는 이유로 무기한 보관하는 예외를 추가하지 않는다.
 
 `apps/api/src/consents.test.ts`는 합성 SQLite/인증 세션으로 Slack 가입 전 확인·활성화 차단, 이력 ID 연결, 철회 경합·같은 시각 재동의·재발급·만료·위조 대상·교수 권한 미발급을 검증한다. `tests/student-consent.test.ts`는 미체크/잘못된 fragment 차단·실제 확인 후 재조회·토큰 URL/저장소 미사용·늦은 응답·오류 처리를 검증한다. 모바일/키보드와 QR 스캔은 합성 브라우저 응답으로 확인한다. 실제 Slack·서류 고지 일치·운영자의 파일럿 시작 확인은 #24/#25에 남아 있다.
+
+통합 과정에서 학생 확인 FK는 선행 #8의 migration 0008로 이미 적용되어, 미적용 draft의 중복 ADD COLUMN migration은 제거했습니다. 0009 Events·0010 History·0011 수업 설정과 전체 schema/snapshot을 보존하고 SQL을 재적용하지 않습니다.
