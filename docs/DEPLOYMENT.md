@@ -153,3 +153,6 @@ OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니
 참고: [Cloudflare GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/), [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Astro Cloudflare 어댑터](https://docs.astro.build/en/guides/integrations-guide/cloudflare/).
 
 OTP 요청의 202는 요청 접수만 뜻합니다. 공급자 전송은 Worker waitUntil에서 실행하며 실패 시 auth.email_delivery_failed 고정 코드로 기록하고 코드를 사용할 수 없게 합니다. 등록 여부 노출 방지를 위해 개별 전송 실패도 동일한 접수 응답과 재요청 제한을 유지합니다. 운영자가 실제 수신·메일 제공자 기록을 확인해야 전달 성공으로 판단합니다. OTP나 이메일·공급자 본문을 로그에 남기지 않습니다.
+# 데이터 보관 정리
+
+Consumer의 기존 매분 cron은 outbox와 별도로 수업 종료 후 UTC 달력 3개월 만료 및 조기 삭제 요청을 처리한다. 실패·재시도와 `ERASURE_FAILED` 운영 경로는 [DATA_LIFECYCLE.md](DATA_LIFECYCLE.md)를 따른다. production 단일 환경과 내부 API service binding은 유지한다.

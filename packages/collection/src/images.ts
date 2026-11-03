@@ -1,7 +1,7 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
-import { collectionGate, collectionWriteGuard } from "./index";
 import { SLACK_TS, slackTsMs } from "./events";
 import { callSlack, openToken, sha256Hex, type SlackFetch } from "./slack";
+import { observeSourceFailure, processingWriteGuard, sourceAccess } from "./lifecycle";
 
 export const IMAGE_LIMITS = { bytes: 8 * 1024 * 1024, batchBytes: 16 * 1024 * 1024, count: 16, pixels: 40_000_000, dimension: 16_384, timeoutMs: 15_000, redirects: 2 } as const;
 export type ImageLimitation = "unsupported_format" | "file_unavailable" | "unsafe_download" | "invalid_image" | "image_too_large" | "image_timeout" | "image_author_uncertain";
@@ -20,8 +20,8 @@ async function loadLiveSource(deps: ImageDeps, target: { teamId: string; channel
     WHERE m.team_id = ? AND m.channel_id = ? AND m.slack_ts = ? AND t.channel_id = m.channel_id`)
     .bind(target.teamId, target.channelId, target.slackTs).first<any>();
   if (!row || row.deleted_at !== null || !row.content_hash || !row.user_id) throw new SourceUnavailable("SOURCE_DELETED");
-  const gate = await collectionGate(deps.db, { teamId: target.teamId, at: slackTsMs(target.slackTs), now: deps.now(), slackUserId: row.user_id });
-  if (!gate.allowed || !gate.studentId) throw new SourceUnavailable("SOURCE_BLOCKED");
+  const gate = await sourceAccess(deps.db, { teamId: target.teamId, at: slackTsMs(target.slackTs), now: deps.now(), slackUserId: row.user_id });
+  if (!gate) throw new SourceUnavailable("SOURCE_BLOCKED");
   const installation = await deps.db.prepare("SELECT token_ciphertext FROM slack_installations WHERE workspace_id = ? AND revoked_at IS NULL").bind(row.workspace_id).first<{ token_ciphertext: string }>();
   if (!installation?.token_ciphertext || !deps.tokenKey) throw new SourceUnavailable("SLACK_UNAVAILABLE");
   let token: string;
@@ -51,7 +51,7 @@ async function loadLiveSource(deps: ImageDeps, target: { teamId: string; channel
 }
 /** Same-transaction fence for every persistent result derived from this message. */
 export function sourceWriteGuard(db: D1Database, ref: SourceRef, now: number): D1PreparedStatement[] {
-  return [collectionWriteGuard(db, { teamId: ref.teamId, from: slackTsMs(ref.slackTs), now, authors: [ref.userId] }),
+  return [processingWriteGuard(db, { teamId: ref.teamId, from: slackTsMs(ref.slackTs), now, authors: [ref.userId] }),
     db.prepare(`SELECT json(CASE WHEN EXISTS (SELECT 1 FROM message_refs WHERE team_id = ? AND channel_id = ? AND slack_ts = ?
       AND revision = ? AND content_hash = ? AND user_id = ? AND deleted_at IS NULL) THEN '1' ELSE 'source_changed' END)`)
       .bind(ref.teamId, ref.channelId, ref.slackTs, ref.revision, ref.contentHash, ref.userId)];
@@ -151,7 +151,10 @@ export type MemoryImage = { fileId: string; dataUrl: string; mime: string; stude
 export async function withMessageImages<T>(deps: ImageDeps, target: { teamId: string; channelId: string; slackTs: string }, use: (input: {
   source: Omit<LiveSource, "token" | "files">; images: MemoryImage[]; limitations: ImageLimitation[]; assertCurrent: () => Promise<void>;
 }) => Promise<T>): Promise<T> {
-  const live = await loadLiveSource(deps, target);
+  const live = await loadLiveSource(deps, target).catch(async error => {
+    if (error instanceof SourceUnavailable && ["SOURCE_CHANGED", "SOURCE_DELETED"].includes(error.code)) await observeSourceFailure(deps.db, target, error.code === "SOURCE_DELETED", deps.now());
+    throw error;
+  });
   const images: MemoryImage[] = [], limitations: ImageLimitation[] = [];
   let loadedBytes = 0;
   const seen = new Set<string>();
@@ -168,8 +171,8 @@ export async function withMessageImages<T>(deps: ImageDeps, target: { teamId: st
         ? "image_too_large" : await download(deps, live.token, file) : "file_unavailable";
       await assertSourceAllowed(deps, live.ref);
       const reason: ImageLimitation | null = typeof result === "string" ? result : null;
-      const author = file?.user ? await collectionGate(deps.db, { teamId: target.teamId, at: slackTsMs(target.slackTs), now: deps.now(), slackUserId: file.user }) : null;
-      const uncertain = !author?.allowed || !author.studentId;
+      const author = file?.user ? await sourceAccess(deps.db, { teamId: target.teamId, at: slackTsMs(target.slackTs), now: deps.now(), slackUserId: file.user }) : null;
+      const uncertain = !author?.studentId;
       if (reason) limitations.push(reason); if (uncertain) limitations.push("image_author_uncertain");
       let contentHash: string | null = null;
       if (typeof result !== "string") {
@@ -177,7 +180,7 @@ export async function withMessageImages<T>(deps: ImageDeps, target: { teamId: st
         const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(result.bytes)));
         contentHash = Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("");
         images.push({ fileId: attached.id, dataUrl: dataUrl(result.mime, result.bytes), mime: result.mime,
-          studentId: author?.allowed ? author.studentId ?? null : null, limitations: uncertain ? ["image_author_uncertain"] : [] });
+          studentId: author?.studentId ?? null, limitations: uncertain ? ["image_author_uncertain"] : [] });
         result.bytes.fill(0);
       }
       await deps.db.batch([...sourceWriteGuard(deps.db, live.ref, deps.now()), deps.db.prepare(`INSERT INTO image_refs
@@ -191,8 +194,13 @@ export async function withMessageImages<T>(deps: ImageDeps, target: { teamId: st
     }
     const assertCurrent = async () => {
       await assertSourceAllowed(deps, live.ref);
-      const current = await loadLiveSource(deps, target);
-      if (current.ref.revision !== live.ref.revision || JSON.stringify(current.files.map(f => f.id).sort()) !== JSON.stringify(live.files.map(f => f.id).sort())) throw new SourceUnavailable("SOURCE_CHANGED");
+      try {
+        const current = await loadLiveSource(deps, target);
+        if (current.ref.revision !== live.ref.revision || JSON.stringify(current.files.map(f => f.id).sort()) !== JSON.stringify(live.files.map(f => f.id).sort())) throw new SourceUnavailable("SOURCE_CHANGED");
+      } catch (error) {
+        if (error instanceof SourceUnavailable && ["SOURCE_CHANGED", "SOURCE_DELETED"].includes(error.code)) await observeSourceFailure(deps.db, target, error.code === "SOURCE_DELETED", deps.now());
+        throw error;
+      }
     };
     await assertCurrent();
     return await use({ source: { ref: live.ref, text: live.text, studentId: live.studentId }, images, limitations: [...new Set(limitations)], assertCurrent });

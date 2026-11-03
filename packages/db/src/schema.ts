@@ -293,3 +293,22 @@ export const imageRefs = sqliteTable("image_refs", {
   contentHash: text("content_hash"), limitation: text("limitation"), verifiedAt: integer("verified_at").notNull(),
 }, table => [primaryKey({ columns: [table.channelId, table.slackTs, table.fileId] }),
   foreignKey({ columns: [table.channelId, table.slackTs], foreignColumns: [messageRefs.channelId, messageRefs.slackTs] })]);
+
+export const teamDataVersions = sqliteTable("team_data_versions", {
+  teamId: text("team_id").primaryKey().references(() => teams.id), epoch: integer("epoch").notNull().default(0),
+  blockedAt: integer("blocked_at"), purgedAt: integer("purged_at"), reason: text("reason"), updatedAt: integer("updated_at").notNull(),
+});
+/** A run without this row is unverified legacy data, never implicitly valid. */
+export const runDataValidity = sqliteTable("run_data_validity", {
+  runId: text("run_id").primaryKey().references(() => analysisRuns.id), teamId: text("team_id").notNull().references(() => teams.id),
+  dataEpoch: integer("data_epoch").notNull(), invalidatedAt: integer("invalidated_at"), reason: text("reason"),
+});
+export const dataInvalidations = sqliteTable("data_invalidations", {
+  id: integer("id").primaryKey({ autoIncrement: true }), teamId: text("team_id").notNull(),
+  epoch: integer("epoch").notNull(), reason: text("reason").notNull(), recordedAt: integer("recorded_at").notNull(),
+});
+export const dataErasureJobs = sqliteTable("data_erasure_jobs", {
+  id: text("id").primaryKey(), teamId: text("team_id").notNull().unique().references(() => teams.id),
+  reason: text("reason").notNull(), status: text("status").notNull().default("pending"), attempts: integer("attempts").notNull().default(0),
+  requestedAt: integer("requested_at").notNull(), completedAt: integer("completed_at"), nextAttemptAt: integer("next_attempt_at").notNull().default(0), errorCode: text("error_code"),
+}, t => [check("data_erasure_status", sql`${t.status} IN ('pending','processing','completed','failed')`)]);

@@ -8,7 +8,7 @@ export type EndReason =
   | "professor" | "consent_changed" | "policy_changed" | "unknown_participant"
   | "member_left" | "bot_removed" | "slack_revoked" | "course_ended";
 export type GateBlock =
-  | "team_inactive" | "policy_not_approved" | "course_ended" | "outside_window" | "unknown_participant" | "consent_missing";
+  | "team_inactive" | "policy_not_approved" | "course_ended" | "outside_window" | "unknown_participant" | "consent_missing" | "data_deleted";
 export type GateResult = { allowed: true; studentId?: string } | { allowed: false; reason: GateBlock };
 
 /** SQL: the consent_history row behind the student's current consent state (the triggers write one row per change). */
@@ -40,6 +40,7 @@ type TeamGateRow = { collection_status: string; approved: number; ends_at: numbe
 export async function collectionGate(
   db: D1Database, input: { teamId: string; at: number; now: number; slackUserId?: string },
 ): Promise<GateResult> {
+  if (await db.prepare("SELECT 1 FROM team_data_versions WHERE team_id = ? AND blocked_at IS NOT NULL").bind(input.teamId).first()) return { allowed: false, reason: "data_deleted" };
   const team = await db.prepare(`SELECT t.collection_status, c.ends_at,
       EXISTS (SELECT 1 FROM consent_policies p WHERE p.version = c.consent_version) AS approved,
       EXISTS (SELECT 1 FROM collection_windows w WHERE w.team_id = t.id AND w.started_at <= ? AND (w.ended_at IS NULL OR w.ended_at > ?)) AS in_window
@@ -88,6 +89,7 @@ export function collectionWriteGuard(db: D1Database, input: {
   // SQLite json() deliberately aborts the transaction on a closed gate (RAISE is trigger-only).
   return db.prepare(`SELECT json(CASE WHEN EXISTS (
     SELECT 1 FROM teams t WHERE t.id = ? AND t.collection_status = 'active'
+      AND NOT EXISTS (SELECT 1 FROM team_data_versions v WHERE v.team_id = t.id AND v.blocked_at IS NOT NULL)
       AND ${pilotReadySql("t.course_id", "?")}
       AND EXISTS (SELECT 1 FROM collection_windows w WHERE w.team_id = t.id AND w.started_at <= ?
         AND (w.ended_at IS NULL OR (w.ended_at > ? AND w.ended_at >= ?)))
@@ -105,3 +107,4 @@ export * from "./events";
 export * from "./slack";
 export * from "./history";
 export * from "./images";
+export * from "./lifecycle";
