@@ -53,6 +53,20 @@ export async function collectionGate(
   return { allowed: true, studentId: member.student_id };
 }
 
+/**
+ * A statement to put first in a write batch. It aborts the whole batch unless, at that moment, the team still collects
+ * (active, approved form, course not ended) and every given author still has a valid consent, which closes the gap
+ * between a gate check and its writes. SQLite has no RAISE outside triggers, so json() on a non-JSON string aborts.
+ */
+export function stillCollectable(db: D1Database, teamId: string, authors: Iterable<string>, now: number): D1PreparedStatement {
+  const list = [...new Set(authors)];
+  return db.prepare(`SELECT json(CASE WHEN
+      EXISTS (SELECT 1 FROM teams gt WHERE gt.id = ? AND gt.collection_status = 'active' AND ${pilotReadySql("gt.course_id", "?")})
+      AND (SELECT COUNT(DISTINCT gs.slack_user_id) FROM team_members gm JOIN student_slack_mappings gs ON gs.student_id = gm.student_id
+        WHERE gm.team_id = ? AND gs.slack_user_id IN (${list.map(() => "?").join(", ")}) AND ${validConsentSql("gm.team_id", "gm.student_id")}) = ?
+    THEN '1' ELSE 'collection_gate_closed' END)`).bind(teamId, now, teamId, ...list, list.length);
+}
+
 /** Statements that stop collection for a team and close its open window. Safe to repeat; batch them with the cause. */
 export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at: number): D1PreparedStatement[] {
   return [
