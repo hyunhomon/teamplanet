@@ -100,6 +100,8 @@ native DLQ에만 있고 DB 장애로 원장 생성도 실패한 유효 메시지
 
 ## 로컬·CI·production 검증
 
+고정된 Bun은 번들을 생성하고 실제 Miniflare 실행·종료는 Node.js 24 자식 프로세스가 수행한다. Windows Bun 1.3.14의 simulator 종료 패닉을 피하며, 자식의 실패 exit code를 그대로 전달한다. 검증 생략이나 성공 강제 처리는 하지 않는다.
+
 ```sh
 bun install --frozen-lockfile
 bun test

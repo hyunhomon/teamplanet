@@ -285,3 +285,11 @@ export const collectionCoverage = sqliteTable("collection_coverage", {
   index("collection_coverage_team").on(table.teamId, table.fromMs, table.toMs),
   check("collection_coverage_status", sql`${table.status} IN ('running', 'complete', 'partial', 'failed')`),
 ]);
+
+/** Attachment metadata only: no URLs, tokens, image bytes or permanent image cache. */
+export const imageRefs = sqliteTable("image_refs", {
+  teamId: text("team_id").notNull().references(() => teams.id), channelId: text("channel_id").notNull(), slackTs: text("slack_ts").notNull(),
+  fileId: text("file_id").notNull(), sourceRevision: text("source_revision").notNull(), fileRevision: text("file_revision"),
+  contentHash: text("content_hash"), limitation: text("limitation"), verifiedAt: integer("verified_at").notNull(),
+}, table => [primaryKey({ columns: [table.channelId, table.slackTs, table.fileId] }),
+  foreignKey({ columns: [table.channelId, table.slackTs], foreignColumns: [messageRefs.channelId, messageRefs.slackTs] })]);
