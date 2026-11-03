@@ -312,3 +312,25 @@ export const dataErasureJobs = sqliteTable("data_erasure_jobs", {
   reason: text("reason").notNull(), status: text("status").notNull().default("pending"), attempts: integer("attempts").notNull().default(0),
   requestedAt: integer("requested_at").notNull(), completedAt: integer("completed_at"), nextAttemptAt: integer("next_attempt_at").notNull().default(0), errorCode: text("error_code"),
 }, t => [check("data_erasure_status", sql`${t.status} IN ('pending','processing','completed','failed')`)]);
+
+export const inquirySettings = sqliteTable("inquiry_settings", {
+  courseId: text("course_id").primaryKey().references(() => courses.id), days: integer("days").notNull(),
+  updatedAt: integer("updated_at").notNull(), lastCleanupAt: integer("last_cleanup_at"), cleanupError: text("cleanup_error"),
+}, t => [check("inquiry_positive_days", sql`${t.days} > 0`)]);
+export const inquiries = sqliteTable("inquiries", {
+  id: text("id").primaryKey(), courseId: text("course_id").notNull().references(() => courses.id),
+  teamId: text("team_id").notNull().references(() => teams.id), studentId: text("student_id").notNull().references(() => students.id),
+  identityHash: text("identity_hash").notNull(), body: text("body").notNull(), answer: text("answer"),
+  receivedAt: integer("received_at").notNull(), days: integer("days").notNull(), expiresAt: integer("expires_at").notNull(), answeredAt: integer("answered_at"),
+}, t => [index("inquiries_expiry").on(t.expiresAt)]);
+/** Short-lived single-use submission capability. Deleting it cannot recreate a received inquiry. */
+export const inquiryTickets = sqliteTable("inquiry_tickets", {
+  hash: text("hash").primaryKey(), identityHash: text("identity_hash").notNull(), courseId: text("course_id").notNull(),
+  teamId: text("team_id").notNull(), studentId: text("student_id").notNull(), days: integer("days").notNull(),
+  validUntil: integer("valid_until").notNull(), inquiryId: text("inquiry_id"),
+});
+/** Body-free actual withdrawal/correction record, independent of inquiry expiry. */
+export const inquiryEffects = sqliteTable("inquiry_effects", {
+  inquiryId: text("inquiry_id").notNull(), teamId: text("team_id").notNull(), studentId: text("student_id").notNull(),
+  kind: text("kind").notNull(), processedAt: integer("processed_at").notNull(),
+}, t => [primaryKey({ columns: [t.inquiryId, t.kind] })]);

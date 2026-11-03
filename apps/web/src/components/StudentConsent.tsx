@@ -37,7 +37,7 @@ export default function StudentConsent() {
           <button className="button primary" disabled={!checked || !!expired || waiting > 0}>동의서 재확인 제출</button>
         </form>
       </>}
-      {state.phase === "confirmed" && <p className="form-notice" role="status">재확인을 기록했습니다. 기록 시각: {state.details.confirmedAt}. 다음 참여 안내는 담당 교수에게 받으세요.</p>}
+      {state.phase === "confirmed" && <><p className="form-notice" role="status">재확인을 기록했습니다. 기록 시각: {state.details.confirmedAt}. 다음 참여 안내는 담당 교수에게 받으세요.</p><a className="button secondary" href={`/inquiries${typeof window === "undefined" ? "" : window.location.hash}`}>본인 웹 문의·답변</a></>}
     </>}
     {state.phase !== "ready" && state.phase !== "loading" && <button className="button secondary" disabled={waiting > 0} onClick={() => void controller.lookup()}>{waiting ? `${waiting}초 후 다시 조회` : "최신 상태 다시 조회"}</button>}
   </section>;

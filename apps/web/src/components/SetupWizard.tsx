@@ -7,6 +7,7 @@ import {
 } from "@teamplanet/contracts";
 import { SetupController, setupLocation, activationReasons, oauthMessages, type Schema } from "../lib/setup";
 import ConsentInvitation from "./ConsentInvitation";
+import ProfessorInquiries from "./ProfessorInquiries";
 
 const competencyDescriptions = {
   clarity: "목표·요청·제약을 상대가 이해하도록 전달하는지 살펴봅니다.",
@@ -69,6 +70,7 @@ export default function SetupWizard({ onSignedOut }: { onSignedOut: () => void }
   const consentLabel = { pending: "미동의", granted: "오프라인 동의 확보", declined: "동의 거절", withdrawn: "동의 철회" };
   const connectionLabel = { not_connected: "미연결", connected: "연결됨", insufficient_scope: "권한 부족", revoked: "연결 철회" };
   return <div className="setup-wizard" aria-label="수업 설정 마법사">
+    {state.courseId && <ProfessorInquiries key={state.courseId} courseId={state.courseId} />}
     {location.outcome && <p className="form-notice" role="status">{oauthMessages[location.outcome]}</p>}
     <p className="setup-policy">성인 내부 파일럿의 동의된 공식 공개 채널만 수집합니다. DM·사적 채널은 제외합니다. 실제 표시명·동의된 프로젝트 이미지 원본은 Qwen/DeepInfra ZDR로 실행 중 전송되며, 원문·이미지를 서비스에 영구 복제하지 않습니다. 교수의 최종 검토를 유지하고 요약·리포트는 수업 종료 후 3개월에 삭제합니다.</p>
     <nav className="setup-toolbar" aria-label="설정 단계"><a href="#slack-setup-title">Slack 연결</a><a href="#course-setup-title">수업·채널</a>{state.courseId && <><a href="#rubric-title">분석 역량</a><a href="#participants-title">참가자·동의</a></>}{team && <a href="#activate-title">수집 상태</a>}</nav>
