@@ -127,6 +127,8 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
         channel, ts: root, oldest: msToTs(a), latest: msToTs(b), inclusive: "true", limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}),
       });
       cursor = nextCursor(page);
+      if (cursor && seen.has(cursor)) throw new JobError("UPSTREAM_UNAVAILABLE", true);
+      if (cursor) seen.add(cursor);
       for (const reply of page.messages) if (reply?.ts !== root) await take(reply, a, b, writes, counters);
       await context.heartbeat();
     } while (cursor);

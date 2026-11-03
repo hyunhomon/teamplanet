@@ -254,7 +254,7 @@ test("repeated pagination cursors fail safely for history and replies", async ()
  for(const [method,requestId] of [["conversations.history","00000000-0000-4000-8000-0000000000c6"],["conversations.replies","00000000-0000-4000-8000-0000000000c7"]] as const){
   intercept=m=>m===method?Response.json({ok:true,messages:[],has_more:true,response_metadata:{next_cursor:"fixed"}}):undefined;
   expect(await run(START,START+5*HOUR,requestId)).toBe(false);
-  expect(coverage(requestId).status).not.toBe("complete");
+  expect(coverage(requestId)).not.toMatchObject({status:"complete"});
  }
  expect(refs()).toEqual([]);
 });
