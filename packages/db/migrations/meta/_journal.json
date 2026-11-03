@@ -57,6 +57,13 @@
       "when": 1793239826076,
       "tag": "0007_condemned_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793725267437,
+      "tag": "0008_high_lilandra",
+      "breakpoints": true
     }
   ]
 }

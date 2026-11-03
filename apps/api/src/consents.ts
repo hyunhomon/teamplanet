@@ -4,7 +4,7 @@ import {
   deactivateTeamSchema, setConsentSchema, teamParamsSchema, teamStudentParamsSchema,
   type ActivateTeamResponse, type CollectionStatusResponse, type Consent, type ConsentConfirmationLookupResponse, type CoursePilotResponse,
 } from "@teamplanet/contracts";
-import { pauseTeam, pilotReadySql, validConsentSql, type EndReason } from "@teamplanet/collection";
+import { currentHistorySql, pauseTeam, pilotReadySql, validConsentSql, type EndReason } from "@teamplanet/collection";
 import { iso, randomToken, sha256 } from "./auth";
 import { apiError, parseBody } from "./errors";
 import { audit, owned } from "./guard";
@@ -18,8 +18,18 @@ type TeamRow = { id: string; course_id: string; workspace_id: string; channel_id
 type ConsentRow = { team_id: string; student_id: string; status: Consent["status"]; version: string; recorded_at: number; confirmed_at: number | null };
 const CONSENT_SQL = `SELECT cs.team_id, cs.student_id, cs.status, cs.version, cs.recorded_at,
     (SELECT MAX(k.confirmed_at) FROM consent_confirmations k WHERE k.team_id = cs.team_id AND k.student_id = cs.student_id
-      AND k.version = cs.version AND k.confirmed_at IS NOT NULL AND k.created_at >= cs.recorded_at) AS confirmed_at
+      AND k.version = cs.version AND k.confirmed_at IS NOT NULL AND cs.status = 'granted'
+      AND k.consent_history_id = ${currentHistorySql("cs.team_id", "cs.student_id")}) AS confirmed_at
   FROM consents cs`;
+/**
+ * SQL predicate on a confirmation row `k`: its own grant is still the student's current state, on the course's approved
+ * form, before the course ends. Lookup, confirm and the reuse of an already confirmed link all require it. Binds: now.
+ */
+const currentLinkSql = (k: string) => `EXISTS (
+  SELECT 1 FROM consents cs JOIN teams lt ON lt.id = cs.team_id JOIN courses lc ON lc.id = lt.course_id
+  WHERE cs.team_id = ${k}.team_id AND cs.student_id = ${k}.student_id AND cs.status = 'granted'
+    AND cs.version = ${k}.version AND cs.version = lc.consent_version AND ${pilotReadySql("lc.id", "?")}
+    AND ${k}.consent_history_id = ${currentHistorySql("cs.team_id", "cs.student_id")})`;
 const toConsent = (row: ConsentRow): Consent => ({
   teamId: row.team_id, studentId: row.student_id, status: row.status, version: row.version,
   recordedAt: iso(row.recorded_at), studentConfirmedAt: row.confirmed_at === null ? null : iso(row.confirmed_at),
@@ -133,27 +143,30 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     const { teamId, studentId } = path.data;
     const db = context.env.DB;
     if (!await owned(context, "team", teamId)) return notFound(context);
-    const consent = await db.prepare(`SELECT cs.version FROM consents cs JOIN teams t ON t.id = cs.team_id JOIN courses c ON c.id = t.course_id
-      WHERE cs.team_id = ? AND cs.student_id = ? AND cs.status = 'granted' AND cs.version = c.consent_version`).bind(teamId, studentId).first<{ version: string }>();
-    if (!consent) return apiError(context, "CONSENT_REQUIRED", "먼저 오프라인 동의서 확보를 기록하세요.");
     const token = randomToken();
     const at = now();
     const expiresAt = at + CONFIRMATION_TTL_MS;
-    await db.batch([
+    // Bound to the current grant's history row inside the insert, so a withdrawal racing this request cannot be linked.
+    const [, issued] = await db.batch([
       db.prepare("DELETE FROM consent_confirmations WHERE team_id = ? AND student_id = ? AND confirmed_at IS NULL").bind(teamId, studentId),
-      db.prepare(`INSERT INTO consent_confirmations (token_hash, team_id, student_id, version, issued_by_professor_id, created_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(await sha256(token), teamId, studentId, consent.version, context.get("professor").id, at, expiresAt),
-      audit(context, { action: "consent.link_issue", targetType: "student", targetId: studentId, result: "succeeded" }, now),
+      db.prepare(`INSERT INTO consent_confirmations (token_hash, team_id, student_id, version, issued_by_professor_id, created_at, expires_at, consent_history_id)
+        SELECT ?, cs.team_id, cs.student_id, cs.version, ?, ?, ?, ${currentHistorySql("cs.team_id", "cs.student_id")}
+        FROM consents cs JOIN teams t ON t.id = cs.team_id JOIN courses c ON c.id = t.course_id
+        WHERE cs.team_id = ? AND cs.student_id = ? AND cs.status = 'granted' AND cs.version = c.consent_version AND ${pilotReadySql("c.id", "?")}`)
+        .bind(await sha256(token), context.get("professor").id, at, expiresAt, teamId, studentId, at),
     ]);
+    if (!issued!.meta.changes) return apiError(context, "CONSENT_REQUIRED", "먼저 오프라인 동의서 확보를 기록하세요.");
+    await audit(context, { action: "consent.link_issue", targetType: "student", targetId: studentId, result: "succeeded" }, now).run();
     // The fragment never reaches servers or Referer headers; the student page (#29) posts it back in the body.
     const confirmationUrl = new URL(`/consent/confirm#${token}`, context.req.url).toString();
     return context.json({ confirmationUrl, expiresAt: iso(expiresAt) }, 201);
   });
 
   // Student side, no professor session (guard.ts exempts /v1/consent-confirmations/). The personal token is the only key.
+  // Only a link whose grant is still current is answered at all; otherwise nothing about the student or course comes back.
   const confirmationRow = async (context: Context<SlackEnv>, token: string) => context.env.DB.prepare(`SELECT k.*, c.name AS course_name,
       t.name AS team_name, s.display_name FROM consent_confirmations k JOIN teams t ON t.id = k.team_id JOIN courses c ON c.id = t.course_id
-      JOIN students s ON s.id = k.student_id WHERE k.token_hash = ?`).bind(await sha256(token))
+      JOIN students s ON s.id = k.student_id WHERE k.token_hash = ? AND ${currentLinkSql("k")}`).bind(await sha256(token), now())
     .first<{ version: string; expires_at: number; confirmed_at: number | null; course_name: string; team_name: string; display_name: string }>();
 
   routes.post("/consent-confirmations/lookup", async context => {
@@ -175,10 +188,8 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     const hash = await sha256(input.data.token);
     // Single use, unexpired, and only while the grant it was issued for is still the current state.
     const confirmed = await db.prepare(`UPDATE consent_confirmations SET confirmed_at = ?
-      WHERE token_hash = ? AND confirmed_at IS NULL AND expires_at > ? AND EXISTS (
-        SELECT 1 FROM consents cs WHERE cs.team_id = consent_confirmations.team_id AND cs.student_id = consent_confirmations.student_id
-          AND cs.status = 'granted' AND cs.version = consent_confirmations.version AND cs.recorded_at <= consent_confirmations.created_at)
-      RETURNING confirmed_at`).bind(at, hash, at).first<{ confirmed_at: number }>();
+      WHERE token_hash = ? AND confirmed_at IS NULL AND expires_at > ? AND ${currentLinkSql("consent_confirmations")}
+      RETURNING confirmed_at`).bind(at, hash, at, at).first<{ confirmed_at: number }>();
     if (confirmed) return context.json({ confirmedAt: iso(confirmed.confirmed_at) }, 200);
     const previous = await confirmationRow(context, input.data.token);
     if (previous?.confirmed_at) return context.json({ confirmedAt: iso(previous.confirmed_at) }, 200);

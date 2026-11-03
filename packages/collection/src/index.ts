@@ -11,15 +11,20 @@ export type GateBlock =
   | "team_inactive" | "policy_not_approved" | "course_ended" | "outside_window" | "unknown_participant" | "consent_missing";
 export type GateResult = { allowed: true; studentId?: string } | { allowed: false; reason: GateBlock };
 
+/** SQL: the consent_history row behind the student's current consent state (the triggers write one row per change). */
+export const currentHistorySql = (team: string, student: string) =>
+  `(SELECT MAX(h.id) FROM consent_history h WHERE h.team_id = ${team} AND h.student_id = ${student})`;
 /**
  * SQL predicate: the student has a valid consent right now. Granted, on the course's current form version,
- * and re-confirmed by the student (QR) with a confirmation issued after that grant.
+ * and re-confirmed by the student (QR) on a link issued for exactly this grant. Links from before a withdrawal
+ * or re-grant point at an older history row and no longer count, even when the timestamps are equal.
  */
 export const validConsentSql = (team: string, student: string) => `EXISTS (
   SELECT 1 FROM consents cs JOIN teams vt ON vt.id = cs.team_id JOIN courses vc ON vc.id = vt.course_id
   WHERE cs.team_id = ${team} AND cs.student_id = ${student} AND cs.status = 'granted' AND cs.version = vc.consent_version
     AND EXISTS (SELECT 1 FROM consent_confirmations k WHERE k.team_id = cs.team_id AND k.student_id = cs.student_id
-      AND k.version = cs.version AND k.confirmed_at IS NOT NULL AND k.created_at >= cs.recorded_at))`;
+      AND k.version = cs.version AND k.confirmed_at IS NOT NULL
+      AND k.consent_history_id = ${currentHistorySql("cs.team_id", "cs.student_id")}))`;
 /** SQL predicate: the course's form version is operator-approved and the course has not ended. */
 export const pilotReadySql = (course: string, now: string) => `EXISTS (
   SELECT 1 FROM courses pc JOIN consent_policies pp ON pp.version = pc.consent_version
