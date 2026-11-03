@@ -20,10 +20,10 @@ export function resendMailer(apiKey: string, from: string, send: typeof fetch = 
 }
 
 /** Console delivery needs both the explicit .dev.vars flag and a loopback request host. */
-export function defaultMailer(env: MailBindings, url: URL): Mailer {
+export function defaultMailer(env: MailBindings, url: URL): Mailer | null {
   if (env.AUTH_DEV_LOG_OTP === "true" && loopback.has(url.hostname)) {
     return async ({ to, code }) => console.log(`[local dev only] TeamPlanet OTP for ${to}: ${code}`);
   }
-  if (!env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM) throw new Error("EMAIL_PROVIDER_NOT_CONFIGURED");
+  if (!env.RESEND_API_KEY || !env.AUTH_EMAIL_FROM) return null;
   return resendMailer(env.RESEND_API_KEY, env.AUTH_EMAIL_FROM);
 }

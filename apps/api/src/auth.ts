@@ -22,7 +22,7 @@ export type AuthDeps = {
   now: () => number;
   sleep: (ms: number) => Promise<unknown>;
   policy: AuthPolicy;
-  mailer: (env: MailBindings, url: URL) => Mailer;
+  mailer: (env: MailBindings, url: URL) => Mailer | null;
   // Tests can capture background delivery; production uses the Worker's waitUntil.
   defer?: (task: Promise<void>) => void;
 };
@@ -90,8 +90,8 @@ export function authRoutes(deps: AuthDeps = defaultAuthDeps) {
   });
 
   async function requestOtp(context: Context<Env>, email: string) {
-    let mailer: Mailer;
-    try { mailer = deps.mailer(context.env, new URL(context.req.url)); }
+    let mailer: Mailer | null;
+    try { mailer = deps.mailer(context.env, new URL(context.req.url)); if (!mailer) throw new Error("MAIL_NOT_CONFIGURED"); }
     catch {
       // Configuration is service-wide, never conditional on the email allowlist.
       return apiError(context, "EMAIL_DELIVERY_UNAVAILABLE", "인증 메일 서비스가 설정되지 않았습니다.", { retryable: true });

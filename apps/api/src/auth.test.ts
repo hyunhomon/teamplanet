@@ -232,10 +232,10 @@ test("malformed or invalid input is a 400 validation error without echoing the i
 test("console OTP delivery needs the explicit dev flag and a loopback host", async () => {
   const flag = { AUTH_DEV_LOG_OTP: "true" };
   const mail = { to: professor.email, code: "012345", challengeId: "challenge_x", expiresAt: new Date() };
-  expect(() => defaultMailer(flag, new URL(`${ORIGIN}/v1`))).toThrow("EMAIL_PROVIDER_NOT_CONFIGURED");
-  expect(() => defaultMailer({}, new URL("http://127.0.0.1:4321/v1"))).toThrow("EMAIL_PROVIDER_NOT_CONFIGURED");
+  expect(defaultMailer(flag, new URL(`${ORIGIN}/v1`))).toBeNull();
+  expect(defaultMailer({}, new URL("http://127.0.0.1:4321/v1"))).toBeNull();
   const log = spyOn(console, "log").mockImplementation(() => {});
-  await defaultMailer(flag, new URL("http://127.0.0.1:4321/v1"))(mail);
+  await defaultMailer(flag, new URL("http://127.0.0.1:4321/v1"))!(mail);
   expect(log).toHaveBeenCalledTimes(1);
   log.mockRestore();
 });
