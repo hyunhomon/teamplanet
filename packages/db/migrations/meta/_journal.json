@@ -64,6 +64,13 @@
       "when": 1793725267437,
       "tag": "0008_high_lilandra",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793725960336,
+      "tag": "0009_steady_black_cat",
+      "breakpoints": true
     }
   ]
 }

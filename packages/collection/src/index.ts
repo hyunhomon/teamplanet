@@ -63,6 +63,15 @@ export async function collectionGate(
   return { allowed: true, studentId: member.student_id };
 }
 
+/**
+ * A statement to put first in a write batch. It aborts the whole batch unless, at that moment, the team still collects
+ * (active, approved form, course not ended) and every given author still has a valid consent, which closes the gap
+ * between a gate check and its writes. SQLite has no RAISE outside triggers, so json() on a non-JSON string aborts.
+ */
+export function stillCollectable(db: D1Database, teamId: string, authors: Iterable<string>, now: number): D1PreparedStatement {
+  return collectionWriteGuard(db, { teamId, from: now, now, authors: [...new Set(authors)] });
+}
+
 /** Statements that stop collection for a team and close its open window. Safe to repeat; batch them with the cause. */
 export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at: number): D1PreparedStatement[] {
   return [
@@ -71,3 +80,25 @@ export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at:
     db.prepare("UPDATE teams SET collection_status = 'paused' WHERE id = ? AND collection_status = 'active'").bind(teamId),
   ];
 }
+
+/** First statement of the SAME D1 batch as source writes/checkpoints; rejection rolls back the entire batch. */
+export function collectionWriteGuard(db: D1Database, input: {
+  teamId: string; from: number; to?: number; now: number; authors?: readonly string[];
+}): D1PreparedStatement {
+  // SQLite json() deliberately aborts the transaction on a closed gate (RAISE is trigger-only).
+  return db.prepare(`SELECT json(CASE WHEN EXISTS (
+    SELECT 1 FROM teams t WHERE t.id = ? AND t.collection_status = 'active'
+      AND ${pilotReadySql("t.course_id", "?")}
+      AND EXISTS (SELECT 1 FROM collection_windows w WHERE w.team_id = t.id AND w.started_at <= ?
+        AND (w.ended_at IS NULL OR (w.ended_at > ? AND w.ended_at >= ?)))
+      AND ${participantsMappedSql("t.id")}
+      AND EXISTS (SELECT 1 FROM team_members WHERE team_id = t.id)
+      AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = t.id AND NOT ${validConsentSql("m.team_id", "m.student_id")})
+      AND NOT EXISTS (SELECT 1 FROM json_each(?) author WHERE NOT EXISTS (
+        SELECT 1 FROM team_members m JOIN student_slack_mappings s ON s.student_id = m.student_id
+        WHERE m.team_id = t.id AND s.slack_user_id = author.value)))
+    THEN '1' ELSE 'collection_gate_closed' END)`)
+    .bind(input.teamId, input.now, input.from, input.from, input.to ?? input.from, JSON.stringify(input.authors ?? []));
+}
+
+export * from "./events";

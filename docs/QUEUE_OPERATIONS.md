@@ -1,6 +1,6 @@
 # Queue 실행·복구 계약
 
-#10은 공통 실행 기반이다. 실제 Slack 수집(#11/#12)·AI 분석(#16/#20) handler는 아직 등록하지 않는다. 현재 등록된 `system.probe`는 합성 체크포인트만 저장하며 메일/Slack/AI/학생 데이터에 접근하지 않는다.
+#10은 공통 실행 기반이다. `slack.event` handler는 #11에서 등록했다(API_CONTRACT.md "Slack Events 수신"). History 보정(#12)·AI 분석(#16/#20) handler는 아직 등록하지 않는다. 현재 등록된 `system.probe`는 합성 체크포인트만 저장하며 메일/Slack/AI/학생 데이터에 접근하지 않는다.
 
 ## 구성과 envelope
 

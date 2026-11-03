@@ -29,6 +29,7 @@
       "name": "@teamplanet/consumer",
       "version": "0.0.0",
       "dependencies": {
+        "@teamplanet/collection": "workspace:*",
         "@teamplanet/contracts": "workspace:*",
         "@teamplanet/queue": "workspace:*",
       },
