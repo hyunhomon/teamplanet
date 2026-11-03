@@ -148,3 +148,5 @@ openssl rand -base64 32 | bunx wrangler secret put SLACK_TOKEN_KEY
 OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니다. `.dev.vars`, `.env`, 인증 토큰과 학생 데이터는 커밋하지 않습니다. UI의 연결 표시는 실제 API 상태이며, 초기 화면에서 로그인이나 분석이 구현된 것처럼 표시하지 않습니다.
 
 참고: [Cloudflare GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/), [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Astro Cloudflare 어댑터](https://docs.astro.build/en/guides/integrations-guide/cloudflare/).
+
+OTP 요청의 202는 요청 접수만 뜻합니다. 공급자 전송은 Worker waitUntil에서 실행하며 실패 시 auth.email_delivery_failed 고정 코드로 기록하고 코드를 사용할 수 없게 합니다. 등록 여부 노출 방지를 위해 개별 전송 실패도 동일한 접수 응답과 재요청 제한을 유지합니다. 운영자가 실제 수신·메일 제공자 기록을 확인해야 전달 성공으로 판단합니다. OTP나 이메일·공급자 본문을 로그에 남기지 않습니다.
