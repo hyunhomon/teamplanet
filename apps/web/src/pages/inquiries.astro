@@ -1,0 +1,8 @@
+---
+import StudentInquiries from "../components/StudentInquiries";
+import "../styles/global.css";
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+---
+<!doctype html><html lang="ko"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="robots" content="noindex,nofollow" /><meta name="referrer" content="no-referrer" /><title>본인 문의 · TeamPlanet</title></head>
+<body><main><StudentInquiries client:only="react" /><noscript>JavaScript를 사용할 수 없으면 담당 교수 이메일로 문의하세요.</noscript></main></body></html>

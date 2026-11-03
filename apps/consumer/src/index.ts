@@ -1,6 +1,6 @@
 import type { D1Database, ExportedHandler, Queue } from "@cloudflare/workers-types";
 import type { QueueEnvelope } from "@teamplanet/contracts";
-import { planEvent, recoverHistory, sweepDataRetention, type EventRefRow, type SlackFetch } from "@teamplanet/collection";
+import { planEvent, recoverHistory, sweepDataRetention, sweepInquiries, type EventRefRow, type SlackFetch } from "@teamplanet/collection";
 import { consumeMessage, flushOutbox, JobError, JobStore, type JobHandlers } from "@teamplanet/queue";
 
 export type Bindings = {
@@ -39,7 +39,7 @@ export default {
     await Promise.all(batch.messages.map(message => consumeMessage(message, store, env.DEAD_LETTER_QUEUE, handlers)));
   },
   async scheduled(_event, env) {
-    const results = await Promise.allSettled([sweepDataRetention(env.DB, Date.now()),
+    const results = await Promise.allSettled([sweepDataRetention(env.DB, Date.now()), sweepInquiries(env.DB, Date.now()),
       flushOutbox(new JobStore(env.DB), env.WORK_QUEUE, env.DEAD_LETTER_QUEUE)]);
     if (results.some(result => result.status === "rejected")) throw new Error("SCHEDULED_WORK_INCOMPLETE");
   },

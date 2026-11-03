@@ -81,6 +81,7 @@ export async function purgeTeam(db: D1Database, teamId: string, now: number) {
   try {
     const writes: D1PreparedStatement[] = [db.prepare(`SELECT json(CASE WHEN EXISTS (SELECT 1 FROM data_erasure_jobs
       WHERE team_id = ? AND attempts = ? AND status = 'processing') THEN '1' ELSE 'erasure_lease_lost' END)`).bind(teamId, job.attempts)];
+    writes.push(db.prepare("DELETE FROM inquiry_effects WHERE team_id = ?").bind(teamId));
     for (const table of ["job_checkpoints", "job_failures", "job_recoveries"]) writes.push(db.prepare(`DELETE FROM ${table} WHERE job_key IN (${jobKeys})`).bind(...jobArgs));
     writes.push(db.prepare(`DELETE FROM queue_jobs WHERE job_key IN (${jobKeys})`).bind(...jobArgs));
     // Remove related audit records before referenced evidence/run rows disappear.

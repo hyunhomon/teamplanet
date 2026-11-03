@@ -47,3 +47,4 @@ export * from "./validation";
 export * from "./rubric";
 export * from "./jobs";
 export * from "./lifecycle";
+export * from "./inquiries";

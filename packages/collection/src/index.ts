@@ -108,3 +108,4 @@ export * from "./slack";
 export * from "./history";
 export * from "./images";
 export * from "./lifecycle";
+export * from "./inquiries";
