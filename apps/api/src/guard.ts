@@ -41,7 +41,7 @@ export function owned<T = Record<string, unknown>>(context: Context<ProtectedEnv
 }
 
 export type AuditAction =
-  | "course.create" | "team.read" | "slack.install"
+  | "course.create" | "course.rubric_set" | "course.rubric_read" | "team.read" | "slack.install"
   | "student.create" | "team.create" | "team.member_set" | "team.invite"
   | "course.pilot_set" | "consent.set" | "consent.link_issue" | "team.activate" | "team.deactivate";
 export type AuditEvent = { action: AuditAction; targetType: OwnedKind | "workspace"; targetId: string; result: "succeeded" | "denied" };

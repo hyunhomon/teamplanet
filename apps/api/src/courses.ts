@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { courseParamsSchema, createCourseSchema, createStudentSchema, type Course, type Student } from "@teamplanet/contracts";
+import { courseParamsSchema, createCourseSchema, createStudentSchema, rubricSelectionSchema, courseRubricResponseSchema, type Course, type Student } from "@teamplanet/contracts";
 import { apiError, parseBody } from "./errors";
 import { audit, owned, type ProtectedEnv } from "./guard";
 
@@ -15,6 +15,43 @@ const toCourse = (row: CourseRow): Course => ({
 
 export function courseRoutes(now: () => number) {
   const routes = new Hono<ProtectedEnv>();
+
+  routes.get("/courses/:courseId/rubric", async context => {
+    const path = courseParamsSchema.safeParse({ courseId: context.req.param("courseId") });
+    if (!path.success) return apiError(context, "VALIDATION_ERROR", "요청 형식을 확인하세요.");
+    const { courseId } = path.data;
+    if (!await owned(context, "course", courseId)) {
+      await audit(context, { action: "course.rubric_read", targetType: "course", targetId: courseId, result: "denied" }, now).run();
+      return apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다.");
+    }
+    const row = await context.env.DB.prepare("SELECT rubric_version, selected_competencies_json, updated_at FROM course_rubric_settings WHERE course_id = ?")
+      .bind(courseId).first<{ rubric_version: string; selected_competencies_json: string; updated_at: number }>();
+    return context.json(courseRubricResponseSchema.parse({ courseId,
+      selection: row ? { rubricVersion: row.rubric_version, selectedCompetencies: JSON.parse(row.selected_competencies_json) } : null,
+      updatedAt: row ? new Date(row.updated_at).toISOString() : null,
+    }), 200);
+  });
+
+  routes.put("/courses/:courseId/rubric", async context => {
+    const path = courseParamsSchema.safeParse({ courseId: context.req.param("courseId") });
+    if (!path.success) return apiError(context, "VALIDATION_ERROR", "요청 형식을 확인하세요.");
+    const { courseId } = path.data;
+    if (!await owned(context, "course", courseId)) {
+      await audit(context, { action: "course.rubric_set", targetType: "course", targetId: courseId, result: "denied" }, now).run();
+      return apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다.");
+    }
+    const input = await parseBody(context, rubricSelectionSchema);
+    if (input.error) return input.error;
+    const at = now();
+    await context.env.DB.batch([
+      context.env.DB.prepare(`INSERT INTO course_rubric_settings (course_id, rubric_version, selected_competencies_json, updated_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(course_id) DO UPDATE SET rubric_version = excluded.rubric_version,
+        selected_competencies_json = excluded.selected_competencies_json, updated_at = excluded.updated_at`)
+        .bind(courseId, input.data.rubricVersion, JSON.stringify(input.data.selectedCompetencies), at),
+      audit(context, { action: "course.rubric_set", targetType: "course", targetId: courseId, result: "succeeded" }, () => at),
+    ]);
+    return context.json(courseRubricResponseSchema.parse({ courseId, selection: input.data, updatedAt: new Date(at).toISOString() }), 200);
+  });
 
   routes.post("/courses", async context => {
     const input = await parseBody(context, createCourseSchema);

@@ -307,3 +307,19 @@ test("changing the course form version or deactivating stops collection; the gat
   expect(stopped.windows.map(w => w.endReason)).toEqual(["policy_changed", "professor"]);
   expect(audits("team.deactivate")).toEqual(["succeeded"]);
 });
+
+
+test("pilot setup persists the real start and returns the owning professor contact", async () => {
+ const cookie=await login(profA!.email);
+ const startsAt=new Date(clock-DAY).toISOString();
+ const endsAt=new Date(clock+60*DAY).toISOString();
+ const path=`/courses/${courseA!.id}/pilot`;
+ const response=await call(path,cookie,{consentVersion:FORM,startsAt,endsAt},"PUT");
+ expect(response.status).toBe(200);
+ expect(await response.json()).toMatchObject({startsAt,endsAt,professorEmail:profA!.email});
+ expect(await (await call(path,cookie)).json()).toMatchObject({startsAt,professorEmail:profA!.email});
+ expect((await call(path,cookie,{consentVersion:FORM,startsAt:endsAt,endsAt},"PUT")).status).toBe(400);
+ // Legacy callers cannot erase the configured real start by omitting the optional field.
+ await setPilot(cookie);
+ expect(await (await call(path,cookie)).json()).toMatchObject({startsAt});
+});

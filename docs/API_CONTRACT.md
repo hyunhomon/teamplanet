@@ -1,5 +1,13 @@
 # API Contract
 
+## 수업별 선택 역량 — #9
+
+`GET /v1/courses/:courseId/rubric`은 `{courseId, selection, updatedAt}`를 반환한다. 설정 전에는 `selection`과 `updatedAt` 모두 null이며 네 역량을 자동 선택하지 않는다. `PUT` 요청은 기존 `rubricSelectionSchema`의 `{rubricVersion:"communication-v1", selectedCompetencies:[...]}`이고, 명시적인 1~4개·중복 없음·알려진 역량만 허용한다. 성공 응답은 `courseRubricResponseSchema`다.
+
+교수 세션·동일 Origin·수업 소유권 검사를 적용한다. 다른 교수의 수업과 없는 수업은 같은 404다. 저장과 `course.rubric_set` 감사 기록을 원자적 batch로 처리하고, 거부된 읽기/쓰기도 대상 ID와 행위자만 감사한다. 설정은 migration `0011_course_rubric_settings.sql`의 별도 테이블에 보관하며 기존 동의 이력·원문·run/평가/교수 확정본을 수정하지 않는다. 저장값이 손상되면 자동 기본값을 만들지 않고 오류로 처리한다.
+
+이 설정은 수집 동의가 아니며 수집 gate를 대체하지 않는다. #16은 새 run 생성 시 선택과 버전을 snapshot으로 고정해야 한다. 현재 설정 변경이 과거 run의 선택 범위를 바꿔서는 안 된다. 분석 실행·데이터 품질·권한 검증은 각각의 후속 API에서 수행한다.
+
 이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7, 동의 gate·활성화는 #8, Slack Events 수신은 #11, History·Replies 보정(Queue job)은 #12에서 구현했다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
@@ -289,3 +297,5 @@ HTTP API는 없다. 분석(#16)이 `slack.history` job(`{requestId, teamId, from
 #11/#12/#13/#16은 Slack 원문을 장기 저장하지 않고 참조·revision/지문·요약을 보관한다. 기존 messages.text와 평가 schema를 이번 문서 PR에서 삭제하지 않는다. 원문 재검증 실패/불일치와 실제 삭제를 구분하며, 근거 링크 제외 및 교수 확정본 무효화·재검토 상태를 #14/#22/#23에서 표현한다. 열람·확정·출력은 최신 원문 검증을 거쳐야 하고, 학생 페이지는 본인 동의/문의에 한정한다. 학생 피드백은 교수가 검증된 리포트를 출력해 전달한다.
 
 Events 원문 참조 접수와 Consumer source 쓰기는 collectionWriteGuard를 같은 D1 batch의 첫 검사로 실행합니다. 현재 팀·허용 구간·전체 참가자/정확한 동의 이력·작성자 매핑이 변경되면 참조·checkpoint·처리 완료 쓰기 전체를 rollback하고 재시도/차단합니다. 미적용 Events migration은 동의 이력 FK migration 0008과 번호가 겹쳐 SQL 내용 보존 상태로 0009_brainy_scarlet_spider로 정리하고 통합 schema에서 metadata를 재생성했습니다.
+
+수업 초기 설정은 실제 startsAt·endsAt을 저장하고 소유 교수의 이메일을 서버에서 반환해 표시합니다. 시작/종료 역전은 거부하고 과거 클라이언트의 startsAt 생략은 기존 값을 보존합니다. 문의 기한 n은 #30, 학생 개인 QR은 #29에서 연결합니다. 0008 동의 FK·0009 Events·0010 History를 보존하고 설정 migration은 미적용 상태에서 0011로 재정합했습니다.

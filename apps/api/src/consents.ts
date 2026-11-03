@@ -45,11 +45,11 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
   const teamParam = (context: Context<SlackEnv>) => teamParamsSchema.safeParse({ teamId: context.req.param("teamId") });
 
   async function pilot(context: Context<SlackEnv>, courseId: string): Promise<CoursePilotResponse> {
-    const row = (await context.env.DB.prepare(`SELECT consent_version, ends_at,
+    const row = (await context.env.DB.prepare(`SELECT consent_version, starts_at, ends_at,
         EXISTS (SELECT 1 FROM consent_policies p WHERE p.version = courses.consent_version) AS approved FROM courses WHERE id = ?`)
-      .bind(courseId).first<{ consent_version: string | null; ends_at: number | null; approved: number }>())!;
+      .bind(courseId).first<{ consent_version: string | null; starts_at: number | null; ends_at: number | null; approved: number }>())!;
     return {
-      courseId, consentVersion: row.consent_version, endsAt: row.ends_at === null ? null : iso(row.ends_at), policyApproved: row.approved === 1,
+      courseId, professorEmail: context.get("professor").email, startsAt: row.starts_at === null ? null : iso(row.starts_at), consentVersion: row.consent_version, endsAt: row.ends_at === null ? null : iso(row.ends_at), policyApproved: row.approved === 1,
     };
   }
 
@@ -67,7 +67,7 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     const input = await parseBody(context, coursePilotSchema);
     if (input.error) return input.error;
     const { courseId } = path.data;
-    const course = await owned<{ consent_version: string | null }>(context, "course", courseId);
+    const course = await owned<{ consent_version: string | null; starts_at: number | null }>(context, "course", courseId);
     if (!course) return notFound(context);
     const db = context.env.DB;
     const at = now();
@@ -76,7 +76,9 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     }
     const endsAt = Date.parse(input.data.endsAt);
     if (endsAt <= at) return apiError(context, "VALIDATION_ERROR", "요청 형식을 확인하세요.", { issues: [{ path: ["endsAt"], message: "수업 종료일은 미래여야 합니다." }] });
-    const writes = [db.prepare("UPDATE courses SET consent_version = ?, ends_at = ? WHERE id = ?").bind(input.data.consentVersion, endsAt, courseId)];
+    const startsAt = input.data.startsAt ? Date.parse(input.data.startsAt) : course.starts_at;
+    if (startsAt !== null && startsAt >= endsAt) return invalidRequest(context);
+    const writes = [db.prepare("UPDATE courses SET consent_version = ?, starts_at = ?, ends_at = ? WHERE id = ?").bind(input.data.consentVersion, startsAt, endsAt, courseId)];
     if (course.consent_version !== null && course.consent_version !== input.data.consentVersion) {
       const { results } = await db.prepare("SELECT id FROM teams WHERE course_id = ? AND collection_status = 'active'").bind(courseId).all<{ id: string }>();
       for (const team of results) writes.push(...pauseTeam(db, team.id, "policy_changed", at));

@@ -10,8 +10,20 @@ export const courses = sqliteTable("courses", {
   id: text("id").primaryKey(), professorId: text("professor_id").notNull().references(() => professors.id),
   name: text("name").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   // #8 pilot settings: the approved consent form version (consent_policies) and the real course end time.
+  startsAt: integer("starts_at", { mode: "timestamp_ms" }),
   consentVersion: text("consent_version"), endsAt: integer("ends_at", { mode: "timestamp_ms" }),
 });
+
+// #9: current course settings only. #16 must snapshot them into each new run.
+export const courseRubricSettings = sqliteTable("course_rubric_settings", {
+  courseId: text("course_id").primaryKey().references(() => courses.id),
+  rubricVersion: text("rubric_version").notNull(),
+  selectedCompetenciesJson: text("selected_competencies_json").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [
+  check("course_rubric_version", sql`${table.rubricVersion} = 'communication-v1'`),
+  check("course_rubric_selection", sql`json_valid(${table.selectedCompetenciesJson}) AND json_type(${table.selectedCompetenciesJson}) = 'array' AND json_array_length(${table.selectedCompetenciesJson}) BETWEEN 1 AND 4`),
+]);
 
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(), slackTeamId: text("slack_team_id").notNull().unique(),
