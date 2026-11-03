@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { IMAGE_LIMITS, withMessageImages, type MemoryImage } from "@teamplanet/collection";
+import { IMAGE_LIMITS, withMessageImages, sha256Hex, type MemoryImage } from "@teamplanet/collection";
 import { deflateSync } from "node:zlib";
 import { collectionFixture } from "./helpers/collection";
 
@@ -86,7 +86,7 @@ test("withdrawal/deletion during download blocks callback, storage, and retries 
   reply = async () => { f.sqlite.run("UPDATE consents SET status = 'withdrawn', recorded_at = 4"); return new Response(PNG, { headers: { "Content-Type": "image/png" } }); };
   await expect(withMessageImages(deps(), f.target, async () => { used = true; })).rejects.toThrow("SOURCE_BLOCKED");
   expect(used).toBe(false); expect(f.sqlite.query("SELECT * FROM image_refs").all()).toHaveLength(0);
-  await expect(run()).rejects.toThrow("SOURCE_BLOCKED");
+  await expect(run()).rejects.toThrow("SOURCE_DELETED");
   f.sqlite.run("UPDATE message_refs SET deleted_at = 5, content_hash = NULL");
   await expect(run()).rejects.toThrow("SOURCE_DELETED");
 });
@@ -94,6 +94,9 @@ test("different team, changed source, removed attachment and missing author neve
   await expect(withMessageImages(deps(), { ...f.target, teamId: "other-team" }, async () => {})).rejects.toThrow();
   message.edited = { ts: `${Math.floor(f.start / 1000) + 200}.000000` };
   await expect(run()).rejects.toThrow("SOURCE_CHANGED");
+  // Once invalidated, the old fingerprint is not silently restored by a retry.
+  await expect(run()).rejects.toThrow("SOURCE_DELETED");
+  f.sqlite.run("UPDATE message_refs SET content_hash = ?, deleted_at = NULL", [await sha256Hex(f.text)]);
   delete message.edited; file.user = "UUNKNOWN1";
   expect(await run()).toMatchObject({ count: 1, limitations: ["image_author_uncertain"] });
   const base = send; let reads = 0;

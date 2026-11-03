@@ -211,6 +211,7 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     const db = context.env.DB;
     const team = await owned<TeamRow>(context, "team", teamId);
     if (!team) return notFound(context);
+    if (await db.prepare("SELECT 1 FROM team_data_versions WHERE team_id = ? AND blocked_at IS NOT NULL").bind(teamId).first()) return apiError(context, "CONFLICT", "삭제 중이거나 삭제된 팀은 다시 활성화할 수 없습니다.");
     const openWindow = () => db.prepare("SELECT started_at FROM collection_windows WHERE team_id = ? AND ended_at IS NULL").bind(teamId).first<{ started_at: number }>();
     const answer = (window: { started_at: number }) =>
       context.json({ teamId, collectionStatus: "active", activatedAt: iso(window.started_at) } satisfies ActivateTeamResponse, 200);
@@ -235,6 +236,7 @@ export function consentRoutes(now: () => number, send: SlackFetch) {
     const at = now();
     await db.batch([
       db.prepare(`UPDATE teams SET collection_status = 'active' WHERE id = ? AND collection_status <> 'active'
+        AND NOT EXISTS (SELECT 1 FROM team_data_versions v WHERE v.team_id = teams.id AND v.blocked_at IS NOT NULL)
         AND ${pilotReadySql("teams.course_id", "?")}
         AND ${participantsMappedSql("teams.id")}
         AND EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = teams.id)

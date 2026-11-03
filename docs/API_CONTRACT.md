@@ -301,3 +301,6 @@ Events 원문 참조 접수와 Consumer source 쓰기는 collectionWriteGuard를
 수업 초기 설정은 실제 startsAt·endsAt을 저장하고 소유 교수의 이메일을 서버에서 반환해 표시합니다. 시작/종료 역전은 거부하고 과거 클라이언트의 startsAt 생략은 기존 값을 보존합니다. 문의 기한 n은 #30, 학생 개인 QR은 #29에서 연결합니다. 0008 동의 FK·0009 Events·0010 History를 보존하고 설정 migration은 미적용 상태에서 0011로 재정합했습니다.
 
 학생 QR #29: 교수는 같은 수업 학생의 오프라인 동의를 Slack 가입 전에 기록할 수 있고, 본인 확인 후 개인 fragment 링크/QR을 직접 전달합니다. 미매핑 참가자는 API 활성화 및 최종 DB 쓰기 모두 차단합니다. 학생 조회는 현재 grant/정책/수업 유효성을 검증하고 담당 교수 이메일을 반환하며 교수 쿠키를 사용/발급하지 않습니다. 기존 원자적 링크 발급·학생 확인·수집 guard를 보존합니다. 자세한 절차는 STUDENT_CONFIRMATION.md를 따릅니다.
+# 데이터 수명주기 API
+
+#14의 교수 소유권 보호 상태·무효화·조기 삭제/재시도는 [DATA_LIFECYCLE.md](DATA_LIFECYCLE.md)와 `packages/contracts/src/lifecycle.ts`를 따른다. 무효화는 교수 확정본에도 적용하며, validity 없는 과거 실행은 검증 전 차단한다.

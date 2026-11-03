@@ -41,6 +41,7 @@ export function owned<T = Record<string, unknown>>(context: Context<ProtectedEnv
 }
 
 export type AuditAction =
+  | "data.erasure_request" | "data.erasure_retry" | "data.invalidate"
   | "course.create" | "course.rubric_set" | "course.rubric_read" | "team.read" | "slack.install"
   | "student.create" | "team.create" | "team.member_set" | "team.invite"
   | "course.pilot_set" | "consent.set" | "consent.link_issue" | "team.activate" | "team.deactivate";
