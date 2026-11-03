@@ -102,3 +102,5 @@ export function collectionWriteGuard(db: D1Database, input: {
 }
 
 export * from "./events";
+export * from "./slack";
+export * from "./history";

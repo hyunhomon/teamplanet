@@ -67,6 +67,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@teamplanet/contracts": "workspace:*",
+        "@teamplanet/queue": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20261024.1",
