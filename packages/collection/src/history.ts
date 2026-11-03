@@ -1,6 +1,6 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { JobError, type JobContext } from "@teamplanet/queue";
-import { collectionGate, stillCollectable } from "./index";
+import { collectionGate, collectionWriteGuard } from "./index";
 import { mergeMessage, SLACK_TS, slackTsMs } from "./events";
 import { callSlack, openToken, sha256Hex, type SlackFetch } from "./slack";
 
@@ -61,9 +61,9 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
   };
   // The gate again, inside the same D1 batch as the writes: if the team or a merged author lost collection rights after take()
   // looked, the whole batch (refs, sweep, counters, cursor, status) rolls back.
-  async function commit(name: string, reference: string, writes: D1PreparedStatement[], authors = new Set<string>()) {
+  async function commit(name: string, reference: string, writes: D1PreparedStatement[], authors = new Set<string>(), interval?: { from: number; to: number }) {
     try {
-      await context.commit(name, reference, [stillCollectable(db, teamId, authors, now()), ...writes]);
+      await context.commit(name, reference, [collectionWriteGuard(db, { teamId, from: interval?.from ?? now(), to: interval?.to, now: now(), authors: [...authors] }), ...writes]);
     } catch (error) {
       await teamGate(); // a closed team gate fails the coverage; anything else (one author's consent, D1) is retried
       throw error;
@@ -121,6 +121,7 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
   }
   async function thread(root: string, a: number, b: number, writes: D1PreparedStatement[], counters: Counters) {
     let cursor: string | undefined;
+    const seen = new Set<string>();
     do {
       const page = await slack("conversations.replies", {
         channel, ts: root, oldest: msToTs(a), latest: msToTs(b), inclusive: "true", limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}),
@@ -142,6 +143,7 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       cursor = decodeCursor(cp.reference);
       page++;
     }
+    const seen = new Set<string>(cursor ? [cursor] : []);
     while (!done) {
       await teamGate();
       const body = await slack("conversations.history", {
@@ -150,6 +152,8 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       const writes: D1PreparedStatement[] = [];
       const counters = { merged: 0, excluded: 0, authors: new Set<string>() };
       const next = nextCursor(body);
+      if (next && seen.has(next)) throw new JobError("UPSTREAM_UNAVAILABLE", true);
+      if (next) seen.add(next);
       for (const message of body.messages) {
         await take(message, a, b, writes, counters);
         const ts = validTs(message?.ts);
@@ -158,7 +162,7 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       if (next && encodeCursor(next).length > 200) throw new JobError("DATA_INVALID", false);
       if (!next) sweep(writes, a, b, "(thread_ts IS NULL OR thread_ts = slack_ts)");
       writes.push(progress(counters).bind(counters.merged, counters.excluded, now(), requestId));
-      await commit(`h${index}p${page}`, next ? encodeCursor(next) : "end", writes, counters.authors);
+      await commit(`h${index}p${page}`, next ? encodeCursor(next) : "end", writes, counters.authors, { from: a, to: b });
       await context.heartbeat();
       cursor = next;
       page++;
@@ -172,7 +176,7 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       const counters = { merged: 0, excluded: 0, authors: new Set<string>() };
       for (const { thread_ts: root } of results) await thread(root, a, b, writes, counters);
       writes.push(progress(counters, ", old_thread_roots = old_thread_roots + ?").bind(counters.merged, counters.excluded, results.length, now(), requestId));
-      await commit(`h${index}old`, String(results.length), writes, counters.authors);
+      await commit(`h${index}old`, String(results.length), writes, counters.authors, { from: a, to: b });
     }
   }
 

@@ -46,7 +46,8 @@ beforeEach(() => {
   sql.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, ?)", [STUDENT, course!.id, WS.id, USER]);
   sql.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, STUDENT, course!.id, WS.id]);
   sql.run("INSERT INTO consents VALUES (?, ?, 'granted', 'pilot-form-v1', 1)", [TEAM, STUDENT]);
-  sql.run("INSERT INTO consent_confirmations VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3, (SELECT MAX(id) FROM consent_history))", [TEAM, STUDENT, prof!.id]);
+  sql.run("INSERT INTO consent_confirmations (token_hash, team_id, student_id, version, issued_by_professor_id, created_at, expires_at, confirmed_at) VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3)", [TEAM, STUDENT, prof!.id]);
+  sql.run("UPDATE consent_confirmations SET consent_history_id=(SELECT MAX(id) FROM consent_history)");
   sql.run("INSERT INTO collection_windows (team_id, started_at) VALUES (?, ?)", [TEAM, START]);
   sent = [];
   const queue = { send: async (body: QueueEnvelope) => { sent.push(body); } } as unknown as Queue<QueueEnvelope>;
@@ -217,6 +218,43 @@ test("an unknown author's message stops the channel without keeping its fingerpr
   expect(refs()).toEqual([]);
   expect(dump()).not.toContain(hash);
   expect(dump()).not.toContain(ts);
+});
+
+
+test("withdrawal between the gate read and intake or consumer commit rolls all source writes back", async () => {
+ const withdraw=()=>{
+  database.sqlite.run("UPDATE consents SET status='withdrawn' WHERE team_id=?",[TEAM]);
+  database.sqlite.run("UPDATE teams SET collection_status='paused' WHERE id=?",[TEAM]);
+  database.sqlite.run("UPDATE collection_windows SET ended_at=?, end_reason='consent_changed' WHERE team_id=? AND ended_at IS NULL",[clock,TEAM]);
+ };
+ const batch=database.db.batch.bind(database.db);
+ let target="INSERT INTO slack_event_refs";
+ let raced=false;
+ database.db.batch=async statements=>{
+  if(!raced && statements.some(s=>(s as unknown as {sql:string}).sql.includes(target))){raced=true;withdraw();}
+  return batch(statements);
+ };
+ expect((await post(callback(message(tsAt(START+1000))))).status).toBe(500);
+ expect(database.sqlite.query("SELECT count(*) AS n FROM slack_event_refs").get()).toEqual({n:0});
+ expect(sent).toHaveLength(0);
+ // A new grant and confirmation allow a fresh event, but not a withdrawal racing its final commit.
+ database.sqlite.run("UPDATE consents SET status='granted' WHERE team_id=?",[TEAM]);
+ database.sqlite.run("UPDATE consent_confirmations SET consent_history_id=(SELECT MAX(id) FROM consent_history)");
+ database.sqlite.run("UPDATE teams SET collection_status='active' WHERE id=?",[TEAM]);
+ database.sqlite.run("UPDATE collection_windows SET ended_at=NULL, end_reason=NULL WHERE team_id=?",[TEAM]);
+ raced=true;
+ expect((await post(callback(message(tsAt(START+2000))))).status).toBe(200);
+ target="INSERT INTO message_refs";raced=false;
+ const body=sent.shift()!;
+ let acked=false;let retried=false;
+ const delivery={id:crypto.randomUUID(),body,attempts:1,ack:()=>{acked=true;},retry:()=>{retried=true;}};
+ const store=new JobStore(database.db,()=>clock);
+ const dlq={send:async()=>{}} as unknown as Queue<QueueEnvelope>;
+ await consumeMessage(delivery,store,dlq,createHandlers(database.db,()=>clock));
+ expect(acked).toBe(false);expect(retried).toBe(true);
+ expect(raced).toBe(true);
+ expect(database.sqlite.query("SELECT count(*) AS n FROM message_refs").get()).toEqual({n:0});
+ expect(database.sqlite.query("SELECT count(*) AS n FROM job_checkpoints WHERE name='apply'").get()).toEqual({n:0});
 });
 
 test("a withdrawal between the consumer's gate check and its write stores nothing", async () => {

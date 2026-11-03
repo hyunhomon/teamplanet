@@ -246,3 +246,15 @@ test("consent withdrawn or the team paused after the gate check rolls the page b
   expect(refs()).toEqual([]);
   expect(coverage(requestId)).toMatchObject({ status: "failed", reason: "team_inactive", merged: 0 });
 });
+
+
+test("repeated pagination cursors fail safely for history and replies", async () => {
+ const root=msg(START+1000,{reply_count:1,thread_ts:ts(START+1000)});
+ channel=[root];
+ for(const [method,requestId] of [["conversations.history","00000000-0000-4000-8000-0000000000c6"],["conversations.replies","00000000-0000-4000-8000-0000000000c7"]] as const){
+  intercept=m=>m===method?Response.json({ok:true,messages:[],has_more:true,response_metadata:{next_cursor:"fixed"}}):undefined;
+  expect(await run(START,START+5*HOUR,requestId)).toBe(false);
+  expect(coverage(requestId).status).not.toBe("complete");
+ }
+ expect(refs()).toEqual([]);
+});
