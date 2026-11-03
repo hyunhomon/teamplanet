@@ -1,6 +1,6 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { JobError, type JobContext } from "@teamplanet/queue";
-import { collectionGate, pilotReadySql, validConsentSql } from "./index";
+import { collectionGate, stillCollectable } from "./index";
 import { mergeMessage, SLACK_TS, slackTsMs } from "./events";
 import { callSlack, openToken, sha256Hex, type SlackFetch } from "./slack";
 
@@ -60,16 +60,10 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
     if (!gate.allowed) throw new Stop(gate.reason);
   };
   // The gate again, inside the same D1 batch as the writes: if the team or a merged author lost collection rights after take()
-  // looked, the whole batch (refs, sweep, counters, cursor, status) rolls back. SQLite has no RAISE outside triggers, so the
-  // json() parse error of a non-JSON string is what aborts it.
-  const stillAllowed = (authors: Set<string>) => db.prepare(`SELECT json(CASE WHEN
-      EXISTS (SELECT 1 FROM teams gt WHERE gt.id = ? AND gt.collection_status = 'active' AND ${pilotReadySql("gt.course_id", "?")})
-      AND (SELECT COUNT(DISTINCT gs.slack_user_id) FROM team_members gm JOIN student_slack_mappings gs ON gs.student_id = gm.student_id
-        WHERE gm.team_id = ? AND gs.slack_user_id IN (${[...authors].map(() => "?").join(", ")}) AND ${validConsentSql("gm.team_id", "gm.student_id")}) = ?
-    THEN '1' ELSE 'collection_gate_closed' END)`).bind(teamId, now(), teamId, ...authors, authors.size);
+  // looked, the whole batch (refs, sweep, counters, cursor, status) rolls back.
   async function commit(name: string, reference: string, writes: D1PreparedStatement[], authors = new Set<string>()) {
     try {
-      await context.commit(name, reference, [stillAllowed(authors), ...writes]);
+      await context.commit(name, reference, [stillCollectable(db, teamId, authors, now()), ...writes]);
     } catch (error) {
       await teamGate(); // a closed team gate fails the coverage; anything else (one author's consent, D1) is retried
       throw error;

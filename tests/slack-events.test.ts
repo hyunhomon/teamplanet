@@ -46,7 +46,7 @@ beforeEach(() => {
   sql.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, ?)", [STUDENT, course!.id, WS.id, USER]);
   sql.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, STUDENT, course!.id, WS.id]);
   sql.run("INSERT INTO consents VALUES (?, ?, 'granted', 'pilot-form-v1', 1)", [TEAM, STUDENT]);
-  sql.run("INSERT INTO consent_confirmations VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3)", [TEAM, STUDENT, prof!.id]);
+  sql.run("INSERT INTO consent_confirmations VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3, (SELECT MAX(id) FROM consent_history))", [TEAM, STUDENT, prof!.id]);
   sql.run("INSERT INTO collection_windows (team_id, started_at) VALUES (?, ?)", [TEAM, START]);
   sent = [];
   const queue = { send: async (body: QueueEnvelope) => { sent.push(body); } } as unknown as Queue<QueueEnvelope>;
@@ -217,4 +217,30 @@ test("an unknown author's message stops the channel without keeping its fingerpr
   expect(refs()).toEqual([]);
   expect(dump()).not.toContain(hash);
   expect(dump()).not.toContain(ts);
+});
+
+test("a withdrawal between the consumer's gate check and its write stores nothing", async () => {
+  await post(callback(message(tsAt(START + 1000))));
+  const batch = database.db.batch.bind(database.db);
+  let race = true;
+  database.db.batch = (async statements => {
+    if (race && statements.some(s => (s as unknown as { sql: string }).sql.includes("INSERT INTO message_refs"))) {
+      race = false;
+      database.sqlite.run("UPDATE consents SET status = 'withdrawn'");
+      database.sqlite.run("UPDATE teams SET collection_status = 'paused'");
+    }
+    return batch(statements);
+  }) as typeof database.db.batch;
+  const [body] = sent.splice(0);
+  let retried = false;
+  await consumeMessage({ id: crypto.randomUUID(), body: body!, attempts: 1, ack: () => {}, retry: () => { retried = true; } },
+    new JobStore(database.db, () => clock), { send: async () => {} } as unknown as Queue<QueueEnvelope>, createHandlers(database.db, () => clock));
+  expect(retried).toBe(true);
+  expect(refs()).toEqual([]);
+
+  clock += 60_000;
+  sent.push(body!);
+  await drain();
+  expect(refs()).toEqual([]);
+  expect(outcomes()).toEqual([{ kind: "message", outcome: "ignored:team_inactive", channel_id: CHANNEL }]);
 });

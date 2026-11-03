@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a63f0d0a-d3d8-4248-a256-c9fae61e56c3",
-  "prevId": "8e75e1ec-0c25-44b0-ba85-8282113c71b6",
+  "id": "3523d214-e1e2-45d1-9843-a5fa0f196e47",
+  "prevId": "29379ff0-56d9-4586-b1de-c83ae0e5ae12",
   "tables": {
     "analysis_runs": {
       "name": "analysis_runs",
@@ -402,141 +402,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "collection_coverage": {
-      "name": "collection_coverage",
-      "columns": {
-        "request_id": {
-          "name": "request_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "team_id": {
-          "name": "team_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "from_ms": {
-          "name": "from_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "to_ms": {
-          "name": "to_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "merged": {
-          "name": "merged",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "excluded": {
-          "name": "excluded",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "tombstoned": {
-          "name": "tombstoned",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "old_thread_roots": {
-          "name": "old_thread_roots",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "limitations_json": {
-          "name": "limitations_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'[]'"
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "collection_coverage_team": {
-          "name": "collection_coverage_team",
-          "columns": [
-            "team_id",
-            "from_ms",
-            "to_ms"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "collection_coverage_team_id_teams_id_fk": {
-          "name": "collection_coverage_team_id_teams_id_fk",
-          "tableFrom": "collection_coverage",
-          "tableTo": "teams",
-          "columnsFrom": [
-            "team_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "collection_coverage_status": {
-          "name": "collection_coverage_status",
-          "value": "\"collection_coverage\".\"status\" IN ('running', 'complete', 'partial', 'failed')"
-        }
-      }
-    },
     "collection_windows": {
       "name": "collection_windows",
       "columns": {
@@ -676,6 +541,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "consent_history_id": {
+          "name": "consent_history_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -695,6 +567,19 @@
           "tableTo": "professors",
           "columnsFrom": [
             "issued_by_professor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "consent_confirmations_consent_history_id_consent_history_id_fk": {
+          "name": "consent_confirmations_consent_history_id_consent_history_id_fk",
+          "tableFrom": "consent_confirmations",
+          "tableTo": "consent_history",
+          "columnsFrom": [
+            "consent_history_id"
           ],
           "columnsTo": [
             "id"

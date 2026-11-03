@@ -71,7 +71,7 @@ beforeEach(async () => {
   sql.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, ?)", [STUDENT, course!.id, WS.id, USER]);
   sql.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, STUDENT, course!.id, WS.id]);
   sql.run("INSERT INTO consents VALUES (?, ?, 'granted', 'pilot-form-v1', 1)", [TEAM, STUDENT]);
-  sql.run("INSERT INTO consent_confirmations VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3)", [TEAM, STUDENT, prof!.id]);
+  sql.run("INSERT INTO consent_confirmations VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3, (SELECT MAX(id) FROM consent_history))", [TEAM, STUDENT, prof!.id]);
   sql.run("INSERT INTO collection_windows (team_id, started_at) VALUES (?, ?)", [TEAM, START]);
   channel = [];
   replies = {};
@@ -238,6 +238,8 @@ test("consent withdrawn or the team paused after the gate check rolls the page b
 
   // The whole team stops: the page rolls back and the coverage fails instead of completing.
   database.sqlite.run("UPDATE consents SET status = 'granted'");
+  // A new grant needs its own student confirmation (#8): point the synthetic one at the new history row.
+  database.sqlite.run("UPDATE consent_confirmations SET consent_history_id = (SELECT MAX(id) FROM consent_history)");
   const requestId = "00000000-0000-4000-8000-0000000000c5";
   race = () => {
     database.sqlite.run("UPDATE consents SET status = 'withdrawn'");

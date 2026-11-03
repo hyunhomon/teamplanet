@@ -114,7 +114,7 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 | 열거 방지 | 미등록 이메일도 같은 202·challenge·발송 제한. 메일은 보내지 않음. OTP 요청 응답은 최소 1초 |
 | Origin | `/v1/*`의 GET/HEAD/OPTIONS 외 요청은 `Origin`이 요청 URL origin과 같아야 함. 아니면 `FORBIDDEN`/403 |
 
-등록 교수에게 메일 제공자가 실패하면 `EMAIL_DELIVERY_UNAVAILABLE`/503이고 challenge를 지운다. 이 응답은 등록 이메일에서만 나오므로 제공자 장애 중에는 등록 여부가 드러날 수 있다. 성공으로 꾸미지 않는다는 계약을 우선했다. 발송 제한은 이메일 기준이라 제3자가 특정 교수의 시간당 요청 한도를 소진시킬 수 있다.
+메일 제공자가 설정되지 않았거나 최근 재발송 대기 시간(60초) 안에 발송 실패가 있었으면 등록 여부와 무관하게 모든 이메일이 `EMAIL_DELIVERY_UNAVAILABLE`/503을 받는다. 등록 교수에게 발송이 실패하면 그 요청도 503이고 challenge는 즉시 만료 처리해 남긴다(코드 사용 불가, 재발송 대기·시간당 제한은 등록 여부와 무관하게 동일하게 적용). 성공으로 꾸미지 않는다. 남은 한계: 장애가 시작된 뒤 첫 등록 이메일 발송 실패 전까지는 미등록 이메일이 202를 받으므로, 그 짧은 구간에는 등록 여부가 드러날 수 있다. 발송 제한은 이메일 기준이라 제3자가 특정 교수의 시간당 요청 한도를 소진시킬 수 있다.
 
 ## 수업·팀·학생 계약 — 구현은 #3/#7
 
@@ -170,9 +170,9 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 ### 동의 gate 구현 — #8 (`apps/api/src/consents.ts`, `packages/collection`)
 
 - **승인된 동의서 버전:** `consent_policies`에 운영자가 D1로 직접 넣은 버전만 승인된 것이다. 행은 동의서와 모델 전송 고지(ADR-0003)를 확인했다는 뜻이며 API로는 추가할 수 없다. 교수는 `PUT /courses/:courseId/pilot`로 승인된 버전과 실제 수업 종료일(미래)을 정한다. 버전을 바꾸면 그 수업의 활성 팀이 즉시 `policy_changed`로 멈추고, 이전 버전의 동의는 무효다.
-- **유효한 동의(서버 판정):** ① `consents.status = granted`, ② 수업의 현재 버전, ③ 그 grant 이후에 발급된 학생 QR 확인 링크로 학생이 재확인. 셋 중 하나라도 없으면 미동의다. 교수의 `granted` 기록에는 `evidenceRef`(종이 동의서 번호 같은 불투명 참조, 개인정보 금지)가 필요하다.
+- **유효한 동의(서버 판정):** ① `consents.status = granted`, ② 수업의 현재 버전, ③ 바로 그 grant(현재 상태를 만든 `consent_history` 행)에 묶여 발급된 학생 QR 확인 링크로 학생이 재확인. 링크는 `consent_confirmations.consent_history_id`로 grant에 묶이므로, 같은 시각에 철회→재동의가 일어나도 이전 링크는 새 grant에 쓰이지 않는다. migration `0008` 이전 링크(NULL)는 어떤 grant에도 묶이지 않아 재발급이 필요하다. 셋 중 하나라도 없으면 미동의다. 교수의 `granted` 기록에는 `evidenceRef`(종이 동의서 번호 같은 불투명 참조, 개인정보 금지)가 필요하다.
 - **이력:** `consents` upsert가 기존 트리거로 `consent_history`를 쓴다. 같은 batch에서 `consent_evidence`가 그 이력 행에 기록 교수와 `evidenceRef`를 붙인다. 같은 상태·버전 반복 PUT은 아무것도 쓰지 않아 학생 재확인을 무효로 만들지 않는다. 팀 멤버가 아닌 학생은 404다.
-- **학생 재확인:** `POST …/confirmation`이 학생별 일회용 링크 `/consent/confirm#<token>`을 만든다(7일, 해시만 저장, 새 링크가 이전 미사용 링크를 지움). 토큰은 URL fragment와 요청 본문으로만 오가므로 서버 로그·Referer에 남지 않는다. `/v1/consent-confirmations/*`는 교수 세션 대신 토큰으로 인증하고 Origin 검사는 그대로 받는다. 확인은 그 링크가 발급된 grant가 현재 상태일 때만 된다. 철회 뒤 옛 링크는 404다. 학생 화면은 #29가 만든다. 링크를 가진 사람을 학생 본인으로 보므로 교수가 학생에게 직접 전달해야 한다.
+- **학생 재확인:** `POST …/confirmation`이 학생별 일회용 링크 `/consent/confirm#<token>`을 만든다(7일, 해시만 저장, 새 링크가 이전 미사용 링크를 지움). 토큰은 URL fragment와 요청 본문으로만 오가므로 서버 로그·Referer에 남지 않는다. `/v1/consent-confirmations/*`는 교수 세션 대신 토큰으로 인증하고 Origin 검사는 그대로 받는다. lookup·confirm·이미 확인된 링크 재사용은 모두 그 링크의 grant가 현재 상태이고, 수업의 승인된 동의서 버전과 같으며, 수업 종료 전일 때만 응답한다. 철회·재동의·버전 변경·종강 뒤 옛 링크는 404이며 학생·수업 정보를 돌려주지 않는다. 발급도 현재 grant가 있을 때 같은 INSERT 안에서 그 이력 ID를 묶는다. 학생 화면은 #29가 만든다. 링크를 가진 사람을 학생 본인으로 보므로 교수가 학생에게 직접 전달해야 한다.
 - **활성화:** 수업 설정(승인 버전·미래 종료일) → #7의 실시간 멤버십 `complete` → 모든 팀 멤버의 유효한 동의 순서로 확인한다. 실패는 `POLICY_NOT_APPROVED`, `CHANNEL_MEMBERSHIP_REQUIRED`, `CONSENT_REQUIRED`/409이고 `team.activate`/`denied` 감사 행이 남는다. 마지막 UPDATE가 같은 조건을 SQL 안에서 다시 검사하므로 확인과 쓰기 사이에 철회가 끼어도 활성화되지 않는다. 이미 활성이면 같은 `activatedAt`을 돌려준다.
 - **허용 구간:** 활성화마다 `collection_windows`에 열린 구간 하나가 생긴다(팀당 열린 구간 1개, 부분 UNIQUE 인덱스). 철회·거절, 버전 변경, 교수 중지(`POST …/deactivate`)는 같은 batch에서 팀을 `paused`로 바꾸고 구간을 닫는다. 닫힌 구간과 `consent_history`로 과거 허용 구간을 재구성한다. 재활성화는 모든 확인을 처음부터 다시 한다.
 - **공통 guard (`@teamplanet/collection`):** `collectionGate(db, {teamId, at, now, slackUserId?})`는 팀 활성·승인 버전·종료일·`at`이 허용 구간 안인지·사용자가 유효 동의를 가진 팀 멤버인지를 확인하고 막힌 이유를 돌려준다. #11 Events와 #12 History는 수신 때와 저장 직전에 이 함수를 다시 부른다. `pauseTeam(db, teamId, reason, at)`은 멈춤 SQL을 돌려주므로 원인 쓰기와 같은 batch로 실행한다. 신규 비동의 멤버·멤버 이탈·봇 제거 이벤트의 자동 멈춤은 #11이 이 함수로 연결한다.
@@ -250,7 +250,7 @@ POST `/v1/slack/events`는 교수 세션·Origin 검사 대신 Slack 서명으�
 - **서명:** `SLACK_SIGNING_SECRET`으로 `v0:<timestamp>:<원문 body>`의 HMAC-SHA256을 WebCrypto로 비교한다. timestamp가 5분보다 차이 나거나 서명이 틀리면 401이고 아무것도 저장·enqueue하지 않는다. secret이 없으면 503. 웹은 `/v1/*` 요청을 원문 그대로 API에 넘긴다. `url_verification`은 서명 확인 뒤 `challenge`만 돌려준다.
 - **접수:** 설치된 workspace(`team_id`)와 앱(`api_app_id`)이 아니면 무시한다. `event_id`로 중복을 막아 Slack 재전송은 200만 받는다. 수집하지 않는 이벤트(DM·group DM·비공개 채널, 등록되지 않은 채널, 봇, 활성 구간 밖, 기타 subtype·이벤트 종류)는 `slack_event_refs`에 id와 `ignored:<이유>`만 남기고 채널·사용자·ts는 남기지 않는다.
 - **원문 비보관:** 메시지 본문은 접수 중 SHA-256 지문을 만들 때만 메모리에 있다. `slack_event_refs`와 Queue job에는 id·kind·채널·ts·작성자·revision·지문만 있다. 테스트가 DB 전체와 Queue envelope에 본문이 없는지 확인한다.
-- **gate 두 번:** 접수 때 `collectionGate`로 팀 활성·허용 구간·작성자 동의를 확인한다. Consumer(`slack.event` handler)가 저장 직전에 다시 확인하므로 접수 뒤 철회·멈춤이 오면 저장하지 않는다(`ignored:team_inactive`). 동의 없는 작성자의 메시지는 저장하지 않고 채널을 `unknown_participant`로 멈춘다. 이때 접수 참조에는 채널·작성자 ID만 남기고 메시지 ts·스레드·revision·본문 지문은 기록하지 않는다.
+- **gate 두 번:** 접수 때 `collectionGate`로 팀 활성·허용 구간·작성자 동의를 확인한다. Consumer(`slack.event` handler)가 저장 직전에 다시 확인하고, 저장 batch 첫 문장(`stillCollectable`)이 같은 트랜잭션에서 팀 활성·정책·종강과 작성자 동의를 한 번 더 확인한다. 확인과 쓰기 사이에 철회·멈춤이 오면 batch 전체가 롤백되고 job 재시도에서 `ignored:team_inactive` 등으로 끝난다. 동의 없는 작성자의 메시지는 저장하지 않고 채널을 `unknown_participant`로 멈춘다. 이때 접수 참조에는 채널·작성자 ID만 남기고 메시지 ts·스레드·revision·본문 지문은 기록하지 않는다.
 - **메시지 참조(`message_refs`):** 채널+Slack ts가 PK다. 더 새로운 revision(`edited.ts`)만 반영하므로 중복·순서 역전에도 최종 상태 하나가 남는다. 삭제는 tombstone(작성자·지문 없음)이며 늦게 온 생성·수정이 되살리지 못한다. 기존 `messages` 테이블(본문 열)은 쓰지 않는다. thread_ts는 저장하고 스레드 복원은 #12가 한다.
 - **참가자 변화:** 동의 없는 사용자 입장 → `unknown_participant`, 팀 멤버 퇴장 → `member_left`, 봇 퇴장 → `bot_removed`로 팀을 멈춘다. `app_uninstalled`·bot `tokens_revoked`는 저장된 토큰을 지우고 workspace의 활성 팀을 `slack_revoked`로 멈춘다.
 - **처리 지표:** `slack_event_refs.outcome`(`queued`, `stored`, `tombstoned`, `ignored:*`, `paused:*`, `revoked`)과 `processed_at`. 실패·재시도는 기존 `job_failures`/DLQ를 따른다. 모두 원문·토큰이 없다.
