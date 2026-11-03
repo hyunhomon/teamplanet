@@ -25,6 +25,7 @@
 - `docs/AI_ORCHESTRATION.md` 3단계 멀티모델 파이프라인
 - `docs/EVALUATION_RUBRIC.md` 4개 역량·근거·평가 가드레일
 - `docs/SLACK_ONBOARDING.md` OAuth·채널/봇 설치·동의 마법사
+- `docs/SLACK_IMAGES.md` 동의·원본 재검증과 메모리 전용 이미지 입력
 - `docs/PRIVACY_AND_DATA.md` 범위·권한·보관·삭제
 - `docs/API_CONTRACT.md` 엔드포인트/상태/에러
 - `docs/DELIVERY_PLAN.md` 개발 순서·검증 기준

@@ -85,6 +85,13 @@
       "when": 1793726698413,
       "tag": "0011_course_rubric_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1793730825296,
+      "tag": "0012_famous_magneto",
+      "breakpoints": true
     }
   ]
 }
