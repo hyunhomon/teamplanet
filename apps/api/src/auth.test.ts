@@ -138,56 +138,63 @@ test("resend cooldown and hourly limit return 429 with Retry-After", async () =>
   expect(Number(hourly.headers.get("Retry-After"))).toBe(60 * 60 - authPolicy.maxRequestsPerHour * 60);
 });
 
-test("provider failure is reported, never faked, and leaves no usable challenge or secret in logs", async () => {
+test("delivery failure preserves opaque responses, unusable challenges and identical throttles", async () => {
   const logs: string[] = [];
-  const spies = [spyOn(console, "log"), spyOn(console, "error")].map(spy => spy.mockImplementation((...args) => { logs.push(args.join(" ")); }));
+  const spy = spyOn(console, "error").mockImplementation((...args) => { logs.push(args.join(" ")); });
   mailFails = true;
-  const failed = await requestOtp();
-  expect(failed.status).toBe(503);
-  expect(apiErrorSchema.parse(await failed.json()).error).toMatchObject({ code: "EMAIL_DELIVERY_UNAVAILABLE", retryable: true });
-  const [challenge] = database.sqlite.query("SELECT id FROM auth_challenges").all() as { id: string }[];
-  expect(await errorCode(await call("/otp/verify", { body: { challengeId: challenge!.id, code: "000000" } }))).toBe("OTP_EXPIRED");
-
-  mailFails = false;
+  const registered = await requestOtp();
+  const unknown = await requestOtp("unknown@example.invalid");
+  expect(registered.status).toBe(202);
+  expect(unknown.status).toBe(202);
+  const a = otpRequestResponseSchema.parse(await registered.json());
+  const b = otpRequestResponseSchema.parse(await unknown.json());
+  for (const challengeId of [a.challengeId, b.challengeId]) {
+    for (let i = 0; i < authPolicy.maxVerifyAttempts; i++) {
+      expect(await errorCode(await call("/otp/verify", { body: { challengeId, code: "000000" } }))).toBe("OTP_INVALID");
+    }
+    expect(await errorCode(await call("/otp/verify", { body: { challengeId, code: "000000" } }))).toBe("RATE_LIMITED");
+  }
+  expect((await requestOtp()).status).toBe(429);
+  expect((await requestOtp("unknown@example.invalid")).status).toBe(429);
+  for (let i=1; i<authPolicy.maxRequestsPerHour; i++) {
+    clock += authPolicy.resendCooldownMs;
+    expect((await requestOtp()).status).toBe(202);
+    expect((await requestOtp("unknown@example.invalid")).status).toBe(202);
+  }
   clock += authPolicy.resendCooldownMs;
-  const { cookie } = await login();
-  spies.forEach(spy => spy.mockRestore());
-  expect(logs).toEqual(["auth.email_delivery_failed EMAIL_PROVIDER_STATUS_500"]);
-  expect(logs.join()).not.toContain(sent[0]!.code);
-  expect(logs.join()).not.toContain(cookie.split("=")[1]!);
+  expect((await requestOtp()).status).toBe(429);
+  expect((await requestOtp("unknown@example.invalid")).status).toBe(429);
+  expect(database.sqlite.query("SELECT COUNT(*) AS count FROM auth_challenges WHERE professor_id IS NOT NULL").get()).toEqual({count:0});
+  expect(database.sqlite.query("SELECT COUNT(*) AS count FROM auth_sessions").get()).toEqual({count:0});
+  spy.mockRestore();
+  expect(logs).toEqual(Array(authPolicy.maxRequestsPerHour).fill("auth.email_delivery_failed EMAIL_PROVIDER_STATUS_500"));
 });
 
-test("a mail outage or missing provider looks the same for registered and unknown emails", async () => {
-  const unknown = "unknown@example.invalid";
-  const waits: number[] = [];
-  app = createApp({
-    now: () => clock, sleep: async ms => { waits.push(ms); }, policy: authPolicy,
-    mailer: () => async mail => { if (mailFails) throw new Error("EMAIL_PROVIDER_STATUS_500"); sent.push(mail); },
-  });
-  const error = spyOn(console, "error").mockImplementation(() => {});
-  const answer = async (email: string) => {
-    const response = await requestOtp(email);
-    return response.status === 202 ? 202 : `${response.status} ${await errorCode(response)}`;
-  };
-  mailFails = true;
-  expect([await answer(professor.email), await answer(unknown)]).toEqual(["503 EMAIL_DELIVERY_UNAVAILABLE", "503 EMAIL_DELIVERY_UNAVAILABLE"]);
-  // Both challenges still count: an immediate retry is rate limited either way.
-  expect([await answer(professor.email), await answer(unknown)]).toEqual(["429 RATE_LIMITED", "429 RATE_LIMITED"]);
-  expect(waits).toEqual(Array(4).fill(authPolicy.minRequestMs));
+test("mail configuration errors are identical for registered and unknown emails", async () => {
+ app=createApp({now:()=>clock,sleep:async()=>{},policy:authPolicy,mailer:defaultMailer});
+ for(const email of [professor.email,"unknown@example.invalid"]){
+  const response=await requestOtp(email);
+  expect(response.status).toBe(503);
+  expect(await errorCode(response)).toBe("EMAIL_DELIVERY_UNAVAILABLE");
+ }
+ expect(database.sqlite.query("SELECT count(*) AS count FROM auth_challenges").get()).toEqual({count:0});
+});
 
-  // After a cooldown without failures, delivery is tried again.
-  mailFails = false;
-  clock += authPolicy.resendCooldownMs;
-  expect([await answer(professor.email), await answer(unknown)]).toEqual([202, 202]);
-  expect(sent.map(mail => mail.to)).toEqual([professor.email]);
-
-  // No provider configured: every address gets the same 503 and the same limits, and nothing is sent.
-  app = createApp({ now: () => clock, sleep: async () => {}, policy: authPolicy, mailer: () => null });
-  clock += authPolicy.resendCooldownMs;
-  expect([await answer(professor.email), await answer(unknown)]).toEqual(["503 EMAIL_DELIVERY_UNAVAILABLE", "503 EMAIL_DELIVERY_UNAVAILABLE"]);
-  expect([await answer(professor.email), await answer(unknown)]).toEqual(["429 RATE_LIMITED", "429 RATE_LIMITED"]);
-  expect(sent).toHaveLength(1);
-  error.mockRestore();
+test("slow or failed background mail cannot change request latency or expose provider details", async () => {
+ let rejectDelivery!: (error:Error)=>void;
+ const tasks:Promise<void>[]=[];
+ app=createApp({now:()=>clock,sleep:async()=>{},policy:authPolicy,defer:task=>{tasks.push(task);},
+  mailer:()=>()=>new Promise<void>((_resolve,reject)=>{rejectDelivery=reject;})});
+ const spy=spyOn(console,"error").mockImplementation(()=>{});
+ const registered=await requestOtp();
+ expect(registered.status).toBe(202);
+ const unknown=await requestOtp("unknown@example.invalid");
+ expect(unknown.status).toBe(202);
+ expect(tasks).toHaveLength(1);
+ rejectDelivery(new Error("secret-code-and-provider-body"));
+ await Promise.all(tasks);
+ expect(spy).toHaveBeenCalledWith("auth.email_delivery_failed","EMAIL_PROVIDER_UNAVAILABLE");
+ spy.mockRestore();
 });
 
 test("state-changing requests from another or missing origin are rejected before any write", async () => {

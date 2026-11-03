@@ -23,6 +23,8 @@ export type AuthDeps = {
   sleep: (ms: number) => Promise<unknown>;
   policy: AuthPolicy;
   mailer: (env: MailBindings, url: URL) => Mailer | null;
+  // Tests can capture background delivery; production uses the Worker's waitUntil.
+  defer?: (task: Promise<void>) => void;
 };
 export const defaultAuthDeps: AuthDeps = {
   now: Date.now, sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), policy: authPolicy, mailer: defaultMailer,
@@ -75,6 +77,12 @@ export function authRoutes(deps: AuthDeps = defaultAuthDeps) {
   });
 
   async function requestOtp(context: Context<Env>, email: string) {
+    let mailer: Mailer | null;
+    try { mailer = deps.mailer(context.env, new URL(context.req.url)); if (!mailer) throw new Error("MAIL_NOT_CONFIGURED"); }
+    catch {
+      // Configuration is service-wide, never conditional on the email allowlist.
+      return apiError(context, "EMAIL_DELIVERY_UNAVAILABLE", "인증 메일 서비스가 설정되지 않았습니다.", { retryable: true });
+    }
     const db = context.env.DB;
     const now = deps.now();
     await db.prepare("DELETE FROM auth_challenges WHERE created_at < ?").bind(now - policy.challengeRetentionMs).run();
@@ -97,25 +105,26 @@ export function authRoutes(deps: AuthDeps = defaultAuthDeps) {
         retryable: true, retryAfterSeconds: Math.max(1, Math.ceil((retryAt - now) / 1000)),
       });
     }
-    // Mail problems answer every address alike: no provider configured, or a delivery failed within the last cooldown.
-    // Either way the challenge row stays, so the cooldown and hourly limit count it the same for registered and unknown emails.
-    const unavailable = () => apiError(context, "EMAIL_DELIVERY_UNAVAILABLE", "인증 메일을 발송하지 못했습니다.", { retryable: true });
-    const mailer = deps.mailer(context.env, new URL(context.req.url));
-    if (!mailer) return unavailable();
-    const outage = await db.prepare("SELECT 1 FROM auth_challenges WHERE professor_id IS NOT NULL AND expires_at = created_at AND created_at > ?")
-      .bind(now - policy.resendCooldownMs).first();
-    if (outage) return unavailable();
     if (professor) {
-      try {
-        await mailer({ to: email, code, challengeId, expiresAt: new Date(now + policy.otpTtlMs) });
-      } catch (error) {
-        // Expiring at creation makes the code unusable and marks the outage the check above reads.
-        // ponytail: an unknown email asked before the first failed delivery of an outage still gets 202.
-        await db.prepare("UPDATE auth_challenges SET expires_at = created_at WHERE id = ?").bind(challengeId).run();
-        console.error("auth.email_delivery_failed", error instanceof Error ? error.message : "unknown");
-        return unavailable();
+      const delivery = (async () => {
+        try { await mailer({ to: email, code, challengeId, expiresAt: new Date(now + policy.otpTtlMs) }); }
+        catch (error) {
+          // Keep the same throttle/verification behaviour as an unregistered email.
+          await db.prepare("UPDATE auth_challenges SET professor_id = NULL WHERE id = ? AND consumed_at IS NULL").bind(challengeId).run();
+          const reason = error instanceof Error && /^EMAIL_PROVIDER_STATUS_\d{3}$/.test(error.message)
+            ? error.message : "EMAIL_PROVIDER_UNAVAILABLE";
+          console.error("auth.email_delivery_failed", reason);
+        }
+      })();
+      if (deps.defer) deps.defer(delivery);
+      else {
+        // app.request() tests have no execution context; real Worker requests always do.
+        let background = false;
+        try { context.executionCtx.waitUntil(delivery); background = true; } catch {}
+        if (!background) await delivery;
       }
     }
+    // 202 acknowledges a request, not delivery. Recipient-specific delivery status is private.
     return context.json({ challengeId, expiresAt: iso(now + policy.otpTtlMs), resendAvailableAt: iso(now + policy.resendCooldownMs) }, 202);
   }
 

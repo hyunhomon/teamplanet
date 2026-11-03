@@ -95,6 +95,21 @@ const activate = (cookie: string, body: unknown = {}) => call(`/teams/${TEAM}/ac
 const status = async (cookie: string) => collectionStatusResponseSchema.parse(await (await call(`/teams/${TEAM}/collection`, cookie)).json());
 const audits = (action: string) => database.sqlite.query("SELECT result FROM audit_events WHERE action = ? ORDER BY id").all(action).map(r => (r as { result: string }).result);
 
+test("a known author's consent cannot hide another unconfirmed team participant", async () => {
+  const cookie = await login(profA!.email);
+  await setPilot(cookie);
+  await setConsent(cookie, "granted");
+  await studentConfirms(cookie);
+  await activate(cookie);
+  const other = "student_00000000-0000-4000-8000-0000000000a2";
+  database.sqlite.run("INSERT INTO students VALUES (?, ?, '합성 추가 참가자', 0)", [other, courseA!.id]);
+  database.sqlite.run("INSERT INTO slack_users VALUES (?, 'USYNTHSTU2')", [WORKSPACE.id]);
+  database.sqlite.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, 'USYNTHSTU2')", [other, courseA!.id, WORKSPACE.id]);
+  database.sqlite.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, other, courseA!.id, WORKSPACE.id]);
+  expect(await collectionGate(database.db, { teamId: TEAM, at: clock, now: clock, slackUserId: USER }))
+    .toEqual({ allowed: false, reason: "consent_missing" });
+});
+
 test("pilot settings need an operator-approved form version and a future course end", async () => {
   const cookie = await login(profA!.email);
   expect(await code(await setPilot(cookie, "synthetic-policy-v1"))).toBe("POLICY_NOT_APPROVED"); // the fixture version is not approved
