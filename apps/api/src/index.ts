@@ -8,6 +8,7 @@ import { courseRoutes } from "./courses";
 import { eventRoutes } from "./events";
 import { lifecycleRoutes } from "./lifecycle";
 import { inquiryRoutes } from "./inquiries";
+import { analysisRoutes } from "./analysis";
 import { apiError } from "./errors";
 import { requireSession, type ProtectedEnv } from "./guard";
 import { slackRoutes, type SlackBindings, type SlackFetch } from "./slack";
@@ -52,6 +53,7 @@ export function createApp(authDeps: AuthDeps = defaultAuthDeps, slackFetch: Slac
   app.route("/v1", eventRoutes(authDeps.now));
   app.route("/v1", lifecycleRoutes(authDeps.now));
   app.route("/v1", inquiryRoutes(authDeps.now));
+  app.route("/v1", analysisRoutes(authDeps.now));
 
   app.notFound(context => apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다."));
   app.onError((_error, context) => apiError(context, "INTERNAL_SERVER_ERROR", "요청을 처리하지 못했습니다."));

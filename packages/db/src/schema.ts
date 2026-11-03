@@ -334,3 +334,24 @@ export const inquiryEffects = sqliteTable("inquiry_effects", {
   inquiryId: text("inquiry_id").notNull(), teamId: text("team_id").notNull(), studentId: text("student_id").notNull(),
   kind: text("kind").notNull(), processedAt: integer("processed_at").notNull(),
 }, t => [primaryKey({ columns: [t.inquiryId, t.kind] })]);
+
+export const analysisSpecs = sqliteTable("analysis_specs", {
+  runId: text("run_id").primaryKey().references(() => analysisRuns.id), teamId: text("team_id").notNull(),
+  professorId: text("professor_id").notNull(), idempotencyKey: text("idempotency_key").notNull(), requestHash: text("request_hash").notNull(),
+  version: integer("version").notNull(), timezone: text("timezone").notNull(), createdAt: integer("created_at").notNull(),
+  snapshotJson: text("snapshot_json").notNull(), studentsJson: text("students_json").notNull(), manifestJson: text("manifest_json"),
+}, t => [uniqueIndex("analysis_idempotency").on(t.professorId, t.idempotencyKey), uniqueIndex("analysis_version").on(t.teamId, t.version)]);
+export const analysisSources = sqliteTable("analysis_sources", {
+  runId: text("run_id").notNull().references(() => analysisRuns.id), id: text("id").notNull(),
+  channelId: text("channel_id").notNull(), slackTs: text("slack_ts").notNull(), refJson: text("ref_json").notNull(),
+  studentId: text("student_id").notNull(), textLength: integer("text_length").notNull(), partsJson: text("parts_json").notNull(), attachmentsJson: text("attachments_json").notNull(),
+}, t => [primaryKey({ columns: [t.runId, t.id] }), uniqueIndex("analysis_source_ref").on(t.runId, t.channelId, t.slackTs)]);
+export const analysisChunks = sqliteTable("analysis_chunks", {
+  runId: text("run_id").notNull().references(() => analysisRuns.id), id: text("id").notNull(), ordinal: integer("ordinal").notNull(), planJson: text("plan_json").notNull(),
+}, t => [primaryKey({ columns: [t.runId, t.id] })]);
+/** Outputs contain summaries and citation hashes, never quotes/raw source or image bytes. */
+export const analysisStageResults = sqliteTable("analysis_stage_results", {
+  runId: text("run_id").notNull().references(() => analysisRuns.id), stage: text("stage").notNull(), chunkId: text("chunk_id").notNull(),
+  iteration: integer("iteration").notNull(), outputJson: text("output_json").notNull(), modelId: text("model_id").notNull(), provider: text("provider").notNull(),
+  promptVersion: text("prompt_version").notNull(), completedAt: integer("completed_at").notNull(),
+}, t => [primaryKey({ columns: [t.runId, t.stage, t.chunkId, t.iteration] })]);

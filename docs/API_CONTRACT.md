@@ -306,3 +306,5 @@ Events 원문 참조 접수와 Consumer source 쓰기는 collectionWriteGuard를
 #14의 교수 소유권 보호 상태·무효화·조기 삭제/재시도는 [DATA_LIFECYCLE.md](DATA_LIFECYCLE.md)와 `packages/contracts/src/lifecycle.ts`를 따른다. 무효화는 교수 확정본에도 적용하며, validity 없는 과거 실행은 검증 전 차단한다.
 
 학생 문의 #30은 [INQUIRIES.md](INQUIRIES.md)와 `packages/contracts/src/inquiries.ts`를 따른다. 수집 동의와 분리된 본인 문의 권한, 접수 당시 n일, 일회성 ticket, 만료 조회 차단과 자동 삭제를 사용한다.
+
+분석 실행 #16의 POST/GET·취소·재개, UTC 기간/시간대·idempotencyKey와 A/B/C JSON/오류/버전은 [ANALYSIS_CONTRACT.md](ANALYSIS_CONTRACT.md)를 따른다. `@teamplanet/contracts/analysis-fixtures`로 #18/#19를 독립 구현한다.

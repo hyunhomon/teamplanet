@@ -2,6 +2,7 @@ import type { D1Database, ExportedHandler, Queue } from "@cloudflare/workers-typ
 import type { QueueEnvelope } from "@teamplanet/contracts";
 import { planEvent, recoverHistory, sweepDataRetention, sweepInquiries, type EventRefRow, type SlackFetch } from "@teamplanet/collection";
 import { consumeMessage, flushOutbox, JobError, JobStore, type JobHandlers } from "@teamplanet/queue";
+import { prepareRun } from "@teamplanet/analysis";
 
 export type Bindings = {
   DB: D1Database; WORK_QUEUE: Queue<QueueEnvelope>; DEAD_LETTER_QUEUE: Queue<QueueEnvelope>;
@@ -9,9 +10,13 @@ export type Bindings = {
 };
 type SlackDeps = { send?: SlackFetch; tokenKey?: string };
 
-// Analysis stays unregistered until its consent/ownership-aware handler exists (#16).
+// #16 prepares authorized reference manifests. Paid model stage handlers remain for #17~#20.
 export function createHandlers(db: D1Database, now: () => number = Date.now, slack: SlackDeps = {}): JobHandlers {
   return {
+    "analysis.prepare": async (job, context) => {
+      if (job.kind !== "analysis.prepare") return;
+      await prepareRun({ db, now, send: slack.send ?? ((url, init) => fetch(url, init)), tokenKey: slack.tokenKey }, job.runId, context);
+    },
     "system.probe": async (_job, context) => { await context.commit("probe", "synthetic-probe"); },
     "slack.history": async (job, context) => {
       if (job.kind !== "slack.history") return;

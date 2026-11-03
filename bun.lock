@@ -15,6 +15,7 @@
       "name": "@teamplanet/api",
       "version": "0.0.0",
       "dependencies": {
+        "@teamplanet/analysis": "workspace:*",
         "@teamplanet/collection": "workspace:*",
         "@teamplanet/contracts": "workspace:*",
         "@teamplanet/db": "workspace:*",
@@ -29,6 +30,7 @@
       "name": "@teamplanet/consumer",
       "version": "0.0.0",
       "dependencies": {
+        "@teamplanet/analysis": "workspace:*",
         "@teamplanet/collection": "workspace:*",
         "@teamplanet/contracts": "workspace:*",
         "@teamplanet/queue": "workspace:*",
@@ -62,6 +64,19 @@
     "packages/ai-core": {
       "name": "@teamplanet/ai-core",
       "version": "0.0.0",
+    },
+    "packages/analysis": {
+      "name": "@teamplanet/analysis",
+      "version": "0.0.0",
+      "dependencies": {
+        "@teamplanet/ai-core": "workspace:*",
+        "@teamplanet/collection": "workspace:*",
+        "@teamplanet/contracts": "workspace:*",
+        "@teamplanet/queue": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261024.1",
+      },
     },
     "packages/collection": {
       "name": "@teamplanet/collection",
@@ -476,6 +491,8 @@
     "@tailwindcss/vite": ["@tailwindcss/vite@4.3.3", "", { "dependencies": { "@tailwindcss/node": "4.3.3", "@tailwindcss/oxide": "4.3.3", "tailwindcss": "4.3.3" }, "peerDependencies": { "vite": "^5.2.0 || ^6 || ^7 || ^8" } }, "sha512-yYU8cogLeSh/ms2jh8Fj7jaba/EWa7Ja6GoUqYZaraEuCI5YS6ms6ObZgjjedm+jm6XZjdNRWBpPP6Z86oOxcw=="],
 
     "@teamplanet/ai-core": ["@teamplanet/ai-core@workspace:packages/ai-core"],
+
+    "@teamplanet/analysis": ["@teamplanet/analysis@workspace:packages/analysis"],
 
     "@teamplanet/api": ["@teamplanet/api@workspace:apps/api"],
 

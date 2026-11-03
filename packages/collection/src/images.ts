@@ -10,7 +10,7 @@ export class SourceUnavailable extends Error {
 }
 export type SourceRef = { teamId: string; channelId: string; slackTs: string; revision: string; contentHash: string; userId: string; threadTs: string | null };
 type LiveSource = { ref: SourceRef; text: string; files: Record<string, any>[]; studentId: string; token: string };
-export type ImageDeps = { db: D1Database; send: SlackFetch; tokenKey?: string; now: () => number };
+export type ImageDeps = { db: D1Database; send: SlackFetch; tokenKey?: string; now: () => number; requestedFileIds?: readonly string[] };
 const fileId = (id: unknown): id is string => typeof id === "string" && /^F[A-Z0-9]{8,}$/.test(id);
 const boundedSend = (deps: ImageDeps): SlackFetch => (url, init) => deps.send(url, { ...init, redirect: "manual", signal: AbortSignal.timeout(IMAGE_LIMITS.timeoutMs) });
 
@@ -19,7 +19,8 @@ async function loadLiveSource(deps: ImageDeps, target: { teamId: string; channel
   const row = await deps.db.prepare(`SELECT m.*, t.workspace_id FROM message_refs m JOIN teams t ON t.id = m.team_id
     WHERE m.team_id = ? AND m.channel_id = ? AND m.slack_ts = ? AND t.channel_id = m.channel_id`)
     .bind(target.teamId, target.channelId, target.slackTs).first<any>();
-  if (!row || row.deleted_at !== null || !row.content_hash || !row.user_id) throw new SourceUnavailable("SOURCE_DELETED");
+  if (!row || row.deleted_at !== null || !row.user_id) throw new SourceUnavailable("SOURCE_DELETED");
+  if (!row.content_hash) throw new SourceUnavailable("SOURCE_CHANGED");
   const gate = await sourceAccess(deps.db, { teamId: target.teamId, at: slackTsMs(target.slackTs), now: deps.now(), slackUserId: row.user_id });
   if (!gate) throw new SourceUnavailable("SOURCE_BLOCKED");
   const installation = await deps.db.prepare("SELECT token_ciphertext FROM slack_installations WHERE workspace_id = ? AND revoked_at IS NULL").bind(row.workspace_id).first<{ token_ciphertext: string }>();
@@ -149,7 +150,7 @@ async function download(deps: ImageDeps, token: string, file: Record<string, any
 export type MemoryImage = { fileId: string; dataUrl: string; mime: string; studentId: string | null; limitations: ImageLimitation[] };
 /** Only the callback sees image data URLs; persistent metadata contains IDs/revisions/hashes/limitations only. */
 export async function withMessageImages<T>(deps: ImageDeps, target: { teamId: string; channelId: string; slackTs: string }, use: (input: {
-  source: Omit<LiveSource, "token" | "files">; images: MemoryImage[]; limitations: ImageLimitation[]; assertCurrent: () => Promise<void>;
+  source: Omit<LiveSource, "token" | "files">; attachmentIds: string[]; images: MemoryImage[]; limitations: ImageLimitation[]; assertCurrent: () => Promise<void>;
 }) => Promise<T>): Promise<T> {
   const live = await loadLiveSource(deps, target).catch(async error => {
     if (error instanceof SourceUnavailable && ["SOURCE_CHANGED", "SOURCE_DELETED"].includes(error.code)) await observeSourceFailure(deps.db, target, error.code === "SOURCE_DELETED", deps.now());
@@ -163,6 +164,7 @@ export async function withMessageImages<T>(deps: ImageDeps, target: { teamId: st
       if (!fileId(attached?.id)) { limitations.push("file_unavailable"); continue; }
       if (seen.has(attached.id)) continue;
       seen.add(attached.id);
+      if (deps.requestedFileIds && !deps.requestedFileIds.includes(attached.id)) continue;
       await assertSourceAllowed(deps, live.ref);
       let info;
       try { info = await callSlack(boundedSend(deps), live.token, "files.info", { file: attached.id }); } catch { info = null; }
@@ -203,6 +205,6 @@ export async function withMessageImages<T>(deps: ImageDeps, target: { teamId: st
       }
     };
     await assertCurrent();
-    return await use({ source: { ref: live.ref, text: live.text, studentId: live.studentId }, images, limitations: [...new Set(limitations)], assertCurrent });
+    return await use({ source: { ref: live.ref, text: live.text, studentId: live.studentId }, attachmentIds: [...seen].sort(), images, limitations: [...new Set(limitations)], assertCurrent });
   } finally { for (const image of images) image.dataUrl = ""; images.length = 0; live.text = ""; live.token = ""; live.files.length = 0; }
 }
