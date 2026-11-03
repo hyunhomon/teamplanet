@@ -41,7 +41,7 @@ export function createApp(authDeps: AuthDeps = defaultAuthDeps, slackFetch: Slac
   app.use("/v1/*", requireSession(authDeps.now));
   app.route("/v1/auth", authRoutes(authDeps));
   app.route("/v1", courseRoutes(authDeps.now));
-  app.route("/v1", teamRoutes(authDeps.now));
+  app.route("/v1", teamRoutes(authDeps.now, slackFetch));
   app.route("/v1", slackRoutes(authDeps.now, slackFetch));
 
   app.notFound(context => apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다."));

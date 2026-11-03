@@ -53,8 +53,9 @@ export const sessionResponseSchema = z.strictObject({ professor: professorSchema
 export const logoutResponseSchema = z.strictObject({ loggedOut: z.literal(true) });
 export const createCourseSchema = z.strictObject({ name: nameSchema });
 export const createStudentSchema = z.strictObject({ displayName: nameSchema });
+// #7: with channelId the server adopts that existing public channel; without it, it creates `teamplanet-{course}-{team}`.
 export const createTeamSchema = z.strictObject({
-  courseId: courseIdSchema, workspaceId: workspaceIdSchema, channelId: slackChannelIdSchema, name: nameSchema,
+  courseId: courseIdSchema, workspaceId: workspaceIdSchema, channelId: slackChannelIdSchema.optional(), name: nameSchema,
 });
 export const setTeamMemberSchema = z.strictObject({
   workspaceId: workspaceIdSchema, slackUserId: slackUserIdSchema,
@@ -93,6 +94,13 @@ export const slackConnectionSchema = z.strictObject({
 export const slackInstallOutcomeSchema = z.enum([
   "installed", "reinstalled", "insufficient_scope", "cancelled", "invalid_state", "workspace_mismatch", "failed",
 ]);
+// #7: live channel membership. `complete` is necessary, not sufficient, for activation (#8 adds consent/policy checks).
+export const teamMembershipSchema = z.strictObject({
+  teamId: teamIdSchema, checkedAt: dateTimeSchema, botInChannel: z.boolean(),
+  members: z.array(z.strictObject({ studentId: studentIdSchema, slackUserId: slackUserIdSchema, inChannel: z.boolean() })),
+  unmappedChannelMembers: z.array(slackUserIdSchema),
+  complete: z.boolean(),
+});
 export const teamParamsSchema = z.strictObject({ teamId: teamIdSchema });
 export const courseParamsSchema = z.strictObject({ courseId: courseIdSchema });
 export const teamStudentParamsSchema = z.strictObject({ teamId: teamIdSchema, studentId: studentIdSchema });
@@ -139,6 +147,7 @@ export type TeamMemberListResponse = z.infer<typeof teamMemberListResponseSchema
 export type ConsentListResponse = z.infer<typeof consentListResponseSchema>;
 export type SlackConnection = z.infer<typeof slackConnectionSchema>;
 export type SlackInstallOutcome = z.infer<typeof slackInstallOutcomeSchema>;
+export type TeamMembership = z.infer<typeof teamMembershipSchema>;
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type ApiErrorCode = ApiError["error"]["code"];
 

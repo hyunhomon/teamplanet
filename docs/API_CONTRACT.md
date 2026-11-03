@@ -1,6 +1,6 @@
 # API Contract
 
-이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6에서 구현했다. Slack 채널·Events·동의 기능은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
+이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6, 학생·팀 채널·멤버 매핑·초대는 #7에서 구현했다. Slack Events·동의 기능은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
 
@@ -124,16 +124,28 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 | GET `/courses` | body 없음 | 200 / `courseListResponseSchema`: `{courses: Course[]}` |
 | POST `/courses/:courseId/students` | `createStudentSchema`: `{displayName}` | 201 / `studentSchema` |
 | GET `/courses/:courseId/students` | body 없음 | 200 / `studentListResponseSchema`: `{students: Student[]}` |
-| POST `/teams` | `createTeamSchema`: `{courseId, workspaceId, channelId, name}` | 201 / `teamSchema` |
+| POST `/teams` | `createTeamSchema`: `{courseId, workspaceId, channelId?, name}` | 201 / `teamSchema` |
 | GET `/teams` | body 없음 | 200 / `teamListResponseSchema`: `{teams: Team[]}` |
 | GET `/teams/:teamId` | body 없음 | 200 / `teamSchema` |
 | PUT `/teams/:teamId/members/:studentId` | `setTeamMemberSchema`: `{workspaceId, slackUserId}` | 200 / `teamMemberSchema` |
 | GET `/teams/:teamId/members` | body 없음 | 200 / `teamMemberListResponseSchema`: `{members: TeamMember[]}` |
 | POST `/teams/:teamId/invite` | `inviteTeamSchema`: `{studentId}` (한 명씩) | 200 / `inviteTeamResponseSchema`: `{teamId, studentId, status}` |
+| GET `/teams/:teamId/membership` | body 없음 | 200 / `teamMembershipSchema`: `{teamId, checkedAt, botInChannel, members, unmappedChannelMembers, complete}` |
 
 `Course`는 `{id, professorId, name, createdAt}`, `Student`는 `{id, courseId, displayName, createdAt}`, `Team`은 `{id, courseId, workspaceId, channelId, name, collectionStatus}`, `TeamMember`는 `{teamId, studentId, courseId, workspaceId, slackUserId}`다. workspace는 `{id, slackTeamId, createdAt}`다. 생성 ID/소유 교수/생성 시각/수집 상태는 서버가 결정하며 팀은 `inactive`로 시작한다. createTeam에 `active`나 교수 ID를 추가하면 400이다. `collectionStatus`는 `inactive | active | paused`며 중단/재활성화 검사는 #8에서 구현한다.
 
 멤버 PUT은 같은 매핑의 반복 요청에 같은 결과를 반환한다. 다른 수업 학생은 404, 소유 범위 안의 중복 매핑·채널·팀은 `CONFLICT`/409다. 초대 결과는 `invited | already_member | manual_invite_required`다. 초대 불가능한 플랜/계정은 수동 초대를 안내하며 자동 초대 성공으로 취급하지 않는다. 초대/매핑 성공으로 실제 가입·동의·활성화를 간주하지 않는다. 목록은 페이지네이션 없는 소유 범위 전체 목록이며 확장은 후속 이슈에서 명시한다.
+
+### 채널·멤버 구현 — #7 (`apps/api/src/teams.ts`)
+
+- **팀 생성:** `channelId`가 있으면 기존 채널을 지정하고, 없으면 `teamplanet-{수업}-{팀}` 공개 채널을 만든다. 이름은 NFKC·소문자로 바꾸고 글자·숫자·`_`·`-` 외 문자는 `-`로 바꿔 80자로 자른다. Slack이 연결되지 않았거나 철회됐으면 `SLACK_UNAVAILABLE`/503, `workspaceId`가 연결된 workspace가 아니면 400이다.
+- **중복 방지:** Slack을 부르기 전에 같은 workspace의 팀 이름·채널 중복을 확인해 409를 반환한다. 그래서 재시도해도 채널을 다시 만들거나 봇을 다시 참여시키지 않는다. 동시 요청은 DB UNIQUE 인덱스가 막는다. Slack에 같은 이름 채널이 이미 있으면(`name_taken`) 409로 기존 채널 지정을 안내한다.
+- **채널 적격성:** `conversations.info`로 공개(`is_private:false`)·비보관·비공유(`is_shared`, `is_ext_shared` 거부)·일반 채널(`is_channel`)인지 확인한다. DM ID는 schema가 먼저 거부한다. 봇이 멤버가 아니면 `conversations.join`으로 참여한다.
+- **학생·매핑:** `POST/GET /courses/:courseId/students`는 소유 수업만 다룬다. 멤버 PUT은 `users.info`로 같은 workspace의 활성 사람 계정인지 확인한다(삭제·봇·다른 team 거부). 같은 매핑 반복은 Slack 조회 없이 같은 결과, 학생의 다른 계정·수업 안 다른 학생의 같은 계정은 409다.
+- **초대:** 매핑된 Slack 계정이 없으면 `manual_invite_required`(workspace 초대는 Slack 관리자가 직접)이고 Slack을 부르지 않는다. 매핑됐지만 팀 멤버가 아니면 409다. `already_in_channel`은 `already_member`, `cant_invite`·`user_is_restricted`·`ura_max_channels`·`no_permission`·`user_not_found`·`org_user_not_in_team`은 `manual_invite_required`, 봇이 채널에 없으면 `CHANNEL_MEMBERSHIP_REQUIRED`/409다. 같은 요청을 다시 보내도 Slack이 중복 초대하지 않는다.
+- **멤버십 상태:** `conversations.info`와 `conversations.members`(페이지 전체)만 호출하고 메시지·파일은 읽지 않는다. 결과는 저장하지 않고 조회 때마다 Slack 현재 상태를 반영한다. `complete`는 봇이 채널에 있고, 매핑된 학생이 1명 이상이며 모두 채널에 있고, 매핑되지 않은 계정(봇 제외)이 없을 때만 true다. 다른 앱의 봇도 미확인 계정으로 본다. `complete`는 활성화의 필요조건일 뿐이며 동의·정책 확인은 #8이 한다. 가입·탈퇴의 즉시 이벤트는 #11 범위다.
+- **Slack 오류:** rate limit은 `RATE_LIMITED`/429와 Slack `Retry-After`, 연결·네트워크 오류는 `SLACK_UNAVAILABLE`/503이다. 로그에는 메서드와 Slack 오류 코드만 남긴다.
+- **감사:** `team.create`, `student.create`, `team.member_set`(남의 팀·학생 시도는 `denied`), `team.invite`.
 
 ## 동의·활성화 계약 — 구현은 #8
 
