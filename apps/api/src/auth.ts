@@ -22,7 +22,7 @@ export type AuthDeps = {
   now: () => number;
   sleep: (ms: number) => Promise<unknown>;
   policy: AuthPolicy;
-  mailer: (env: MailBindings, url: URL) => Mailer;
+  mailer: (env: MailBindings, url: URL) => Mailer | null;
 };
 export const defaultAuthDeps: AuthDeps = {
   now: Date.now, sleep: ms => new Promise(resolve => setTimeout(resolve, ms)), policy: authPolicy, mailer: defaultMailer,
@@ -110,14 +110,23 @@ export function authRoutes(deps: AuthDeps = defaultAuthDeps) {
         retryable: true, retryAfterSeconds: Math.max(1, Math.ceil((retryAt - now) / 1000)),
       });
     }
+    // Mail problems answer every address alike: no provider configured, or a delivery failed within the last cooldown.
+    // Either way the challenge row stays, so the cooldown and hourly limit count it the same for registered and unknown emails.
+    const unavailable = () => apiError(context, "EMAIL_DELIVERY_UNAVAILABLE", "인증 메일을 발송하지 못했습니다.", { retryable: true });
+    const mailer = deps.mailer(context.env, new URL(context.req.url));
+    if (!mailer) return unavailable();
+    const outage = await db.prepare("SELECT 1 FROM auth_challenges WHERE professor_id IS NOT NULL AND expires_at = created_at AND created_at > ?")
+      .bind(now - policy.resendCooldownMs).first();
+    if (outage) return unavailable();
     if (professor) {
       try {
-        await deps.mailer(context.env, new URL(context.req.url))({ to: email, code, challengeId, expiresAt: new Date(now + policy.otpTtlMs) });
+        await mailer({ to: email, code, challengeId, expiresAt: new Date(now + policy.otpTtlMs) });
       } catch (error) {
-        // Remove the undelivered challenge so the professor can retry without waiting for the cooldown.
-        await db.prepare("DELETE FROM auth_challenges WHERE id = ?").bind(challengeId).run();
+        // Expiring at creation makes the code unusable and marks the outage the check above reads.
+        // ponytail: an unknown email asked before the first failed delivery of an outage still gets 202.
+        await db.prepare("UPDATE auth_challenges SET expires_at = created_at WHERE id = ?").bind(challengeId).run();
         console.error("auth.email_delivery_failed", error instanceof Error ? error.message : "unknown");
-        return apiError(context, "EMAIL_DELIVERY_UNAVAILABLE", "인증 메일을 발송하지 못했습니다.", { retryable: true });
+        return unavailable();
       }
     }
     return context.json({ challengeId, expiresAt: iso(now + policy.otpTtlMs), resendAvailableAt: iso(now + policy.resendCooldownMs) }, 202);

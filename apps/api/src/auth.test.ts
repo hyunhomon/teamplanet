@@ -145,14 +145,49 @@ test("provider failure is reported, never faked, and leaves no usable challenge 
   const failed = await requestOtp();
   expect(failed.status).toBe(503);
   expect(apiErrorSchema.parse(await failed.json()).error).toMatchObject({ code: "EMAIL_DELIVERY_UNAVAILABLE", retryable: true });
-  expect(database.sqlite.query("SELECT COUNT(*) AS count FROM auth_challenges").get()).toEqual({ count: 0 });
+  const [challenge] = database.sqlite.query("SELECT id FROM auth_challenges").all() as { id: string }[];
+  expect(await errorCode(await call("/otp/verify", { body: { challengeId: challenge!.id, code: "000000" } }))).toBe("OTP_EXPIRED");
 
   mailFails = false;
+  clock += authPolicy.resendCooldownMs;
   const { cookie } = await login();
   spies.forEach(spy => spy.mockRestore());
   expect(logs).toEqual(["auth.email_delivery_failed EMAIL_PROVIDER_STATUS_500"]);
   expect(logs.join()).not.toContain(sent[0]!.code);
   expect(logs.join()).not.toContain(cookie.split("=")[1]!);
+});
+
+test("a mail outage or missing provider looks the same for registered and unknown emails", async () => {
+  const unknown = "unknown@example.invalid";
+  const waits: number[] = [];
+  app = createApp({
+    now: () => clock, sleep: async ms => { waits.push(ms); }, policy: authPolicy,
+    mailer: () => async mail => { if (mailFails) throw new Error("EMAIL_PROVIDER_STATUS_500"); sent.push(mail); },
+  });
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  const answer = async (email: string) => {
+    const response = await requestOtp(email);
+    return response.status === 202 ? 202 : `${response.status} ${await errorCode(response)}`;
+  };
+  mailFails = true;
+  expect([await answer(professor.email), await answer(unknown)]).toEqual(["503 EMAIL_DELIVERY_UNAVAILABLE", "503 EMAIL_DELIVERY_UNAVAILABLE"]);
+  // Both challenges still count: an immediate retry is rate limited either way.
+  expect([await answer(professor.email), await answer(unknown)]).toEqual(["429 RATE_LIMITED", "429 RATE_LIMITED"]);
+  expect(waits).toEqual(Array(4).fill(authPolicy.minRequestMs));
+
+  // After a cooldown without failures, delivery is tried again.
+  mailFails = false;
+  clock += authPolicy.resendCooldownMs;
+  expect([await answer(professor.email), await answer(unknown)]).toEqual([202, 202]);
+  expect(sent.map(mail => mail.to)).toEqual([professor.email]);
+
+  // No provider configured: every address gets the same 503 and the same limits, and nothing is sent.
+  app = createApp({ now: () => clock, sleep: async () => {}, policy: authPolicy, mailer: () => null });
+  clock += authPolicy.resendCooldownMs;
+  expect([await answer(professor.email), await answer(unknown)]).toEqual(["503 EMAIL_DELIVERY_UNAVAILABLE", "503 EMAIL_DELIVERY_UNAVAILABLE"]);
+  expect([await answer(professor.email), await answer(unknown)]).toEqual(["429 RATE_LIMITED", "429 RATE_LIMITED"]);
+  expect(sent).toHaveLength(1);
+  error.mockRestore();
 });
 
 test("state-changing requests from another or missing origin are rejected before any write", async () => {
@@ -190,10 +225,10 @@ test("malformed or invalid input is a 400 validation error without echoing the i
 test("console OTP delivery needs the explicit dev flag and a loopback host", async () => {
   const flag = { AUTH_DEV_LOG_OTP: "true" };
   const mail = { to: professor.email, code: "012345", challengeId: "challenge_x", expiresAt: new Date() };
-  await expect(defaultMailer(flag, new URL(`${ORIGIN}/v1`))(mail)).rejects.toThrow("EMAIL_PROVIDER_NOT_CONFIGURED");
-  await expect(defaultMailer({}, new URL("http://127.0.0.1:4321/v1"))(mail)).rejects.toThrow("EMAIL_PROVIDER_NOT_CONFIGURED");
+  expect(defaultMailer(flag, new URL(`${ORIGIN}/v1`))).toBeNull();
+  expect(defaultMailer({}, new URL("http://127.0.0.1:4321/v1"))).toBeNull();
   const log = spyOn(console, "log").mockImplementation(() => {});
-  await defaultMailer(flag, new URL("http://127.0.0.1:4321/v1"))(mail);
+  await defaultMailer(flag, new URL("http://127.0.0.1:4321/v1"))!(mail);
   expect(log).toHaveBeenCalledTimes(1);
   log.mockRestore();
 });
