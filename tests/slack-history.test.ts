@@ -227,14 +227,11 @@ test("consent withdrawn or the team paused after the gate check rolls the page b
     return batch(statements);
   }) as typeof database.db.batch;
 
-  // One author's consent goes away: the page is retried and the next attempt leaves that author out.
+  // A participant's consent goes away: the page rolls back, and since every participant must consent (#8) the run fails.
   race = () => database.sqlite.run("UPDATE consents SET status = 'withdrawn'");
-  expect(await run()).toBe(false);
-  expect(refs()).toEqual([]);
-  clock += 60_000;
   expect(await run()).toBe(true);
   expect(refs()).toEqual([]);
-  expect(coverage()).toMatchObject({ status: "complete", merged: 0, excluded: 1 });
+  expect(coverage()).toMatchObject({ status: "failed", reason: "consent_missing", merged: 0 });
 
   // The whole team stops: the page rolls back and the coverage fails instead of completing.
   database.sqlite.run("UPDATE consents SET status = 'granted'");
