@@ -122,6 +122,15 @@ bunx wrangler d1 execute DB --remote --command "INSERT INTO professors (id, emai
 
 4. 실제 전달 확인: 등록한 본인 테스트 이메일로 https://teamplanet.cloby.co 에서 OTP를 요청하고 메일 수신, 로그인, `/v1/auth/me` 200, 로그아웃 후 401을 확인합니다. Resend 대시보드의 Emails 기록과 `bunx wrangler tail teamplanet-api`의 `auth.email_delivery_failed` 유무도 확인합니다. 로그에는 OTP·토큰을 남기지 않습니다.
 
+### 동의서 버전 승인(#8)
+
+운영자가 동의서·고지(모델 전송 포함) 확인을 마친 버전만 등록합니다. 이 행이 없으면 어떤 팀도 활성화되지 않습니다. 버전 문자열에 학생 정보를 넣지 않습니다.
+
+```sh
+cd apps/api
+bunx wrangler d1 execute DB --remote --command "INSERT INTO consent_policies (version, notice_confirmed_at, approved_by) VALUES ('<form-version>', <epoch-ms>, 'hyunhomon')"
+```
+
 ### Slack 앱(#6)
 
 1. https://api.slack.com/apps → Create New App → From a manifest에서 파일럿 workspace를 고르고 [`apps/api/slack-manifest.json`](../apps/api/slack-manifest.json)을 붙여 넣습니다.

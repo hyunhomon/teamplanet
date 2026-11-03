@@ -27,6 +27,37 @@ export function channelName(courseName: string, teamName: string) {
   return `teamplanet-${slug(courseName) || "course"}-${slug(teamName) || "team"}`.slice(0, 80).replace(/-+$/, "");
 }
 
+/** Current channel membership from Slack, or the error Response to return. Shared by the membership API and activation (#8). */
+export async function liveMembership(
+  context: Context<SlackEnv>, team: Pick<TeamRow, "id" | "workspace_id" | "channel_id">, send: SlackFetch, now: () => number,
+): Promise<TeamMembership | Response> {
+  const bot = await slackBot(context);
+  if (!bot || bot.workspaceId !== team.workspace_id) return slackNotConnected(context);
+  const channelMembers = new Set<string>();
+  let botInChannel: boolean;
+  try {
+    const info = await callSlack(send, bot.token, "conversations.info", { channel: team.channel_id });
+    if (!info.ok) return slackFailure(context, "conversations.info", info);
+    botInChannel = info.body.channel?.is_member === true && info.body.channel?.is_archived !== true;
+    let cursor = "";
+    do {
+      const page = await callSlack(send, bot.token, "conversations.members", { channel: team.channel_id, limit: "200", ...(cursor ? { cursor } : {}) });
+      if (!page.ok) return slackFailure(context, "conversations.members", page);
+      for (const id of page.body.members ?? []) if (slackUserIdSchema.safeParse(id).success) channelMembers.add(id);
+      cursor = typeof page.body.response_metadata?.next_cursor === "string" ? page.body.response_metadata.next_cursor : "";
+    } while (cursor);
+  } catch {
+    return slackFailure(context, "conversations.members", { error: "network" });
+  }
+  const { results } = await context.env.DB.prepare(MEMBERS_SQL).bind(team.id).all<MemberRow>();
+  const members = results.map(row => ({ studentId: row.student_id, slackUserId: row.slack_user_id, inChannel: channelMembers.has(row.slack_user_id) }));
+  const known = new Set([bot.botUserId, ...members.map(member => member.slackUserId)]);
+  // ponytail: any unmapped account (also other apps' bots) blocks completeness; add a per-user bot lookup if pilots need other apps.
+  const unmappedChannelMembers = [...channelMembers].filter(id => !known.has(id)).sort();
+  const complete = botInChannel && members.length > 0 && members.every(member => member.inChannel) && unmappedChannelMembers.length === 0;
+  return { teamId: team.id, checkedAt: iso(now()), botInChannel, members, unmappedChannelMembers, complete };
+}
+
 const notFound = (context: Context) => apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다.");
 const invalid = (context: Context, path: string, message: string) =>
   apiError(context, "VALIDATION_ERROR", "요청 형식을 확인하세요.", { issues: [{ path: [path], message }] });
@@ -180,31 +211,8 @@ export function teamRoutes(now: () => number, send: SlackFetch) {
     if (!parsed.success) return apiError(context, "VALIDATION_ERROR", "요청 형식을 확인하세요.");
     const team = await owned<TeamRow>(context, "team", parsed.data.teamId);
     if (!team) return notFound(context);
-    const bot = await slackBot(context);
-    if (!bot || bot.workspaceId !== team.workspace_id) return slackNotConnected(context);
-    const channelMembers = new Set<string>();
-    let botInChannel: boolean;
-    try {
-      const info = await callSlack(send, bot.token, "conversations.info", { channel: team.channel_id });
-      if (!info.ok) return slackFailure(context, "conversations.info", info);
-      botInChannel = info.body.channel?.is_member === true && info.body.channel?.is_archived !== true;
-      let cursor = "";
-      do {
-        const page = await callSlack(send, bot.token, "conversations.members", { channel: team.channel_id, limit: "200", ...(cursor ? { cursor } : {}) });
-        if (!page.ok) return slackFailure(context, "conversations.members", page);
-        for (const id of page.body.members ?? []) if (slackUserIdSchema.safeParse(id).success) channelMembers.add(id);
-        cursor = typeof page.body.response_metadata?.next_cursor === "string" ? page.body.response_metadata.next_cursor : "";
-      } while (cursor);
-    } catch {
-      return slackFailure(context, "conversations.members", { error: "network" });
-    }
-    const { results } = await context.env.DB.prepare(MEMBERS_SQL).bind(team.id).all<MemberRow>();
-    const members = results.map(row => ({ studentId: row.student_id, slackUserId: row.slack_user_id, inChannel: channelMembers.has(row.slack_user_id) }));
-    const known = new Set([bot.botUserId, ...members.map(member => member.slackUserId)]);
-    // ponytail: any unmapped account (also other apps' bots) blocks completeness; per-user bot lookup can come with #8 if needed.
-    const unmappedChannelMembers = [...channelMembers].filter(id => !known.has(id)).sort();
-    const complete = botInChannel && members.length > 0 && members.every(member => member.inChannel) && unmappedChannelMembers.length === 0;
-    return context.json({ teamId: team.id, checkedAt: iso(now()), botInChannel, members, unmappedChannelMembers, complete } satisfies TeamMembership, 200);
+    const membership = await liveMembership(context, team, send, now);
+    return membership instanceof Response ? membership : context.json(membership, 200);
   });
 
   routes.post("/teams/:teamId/invite", async context => {
