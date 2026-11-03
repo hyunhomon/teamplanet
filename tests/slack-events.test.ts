@@ -46,7 +46,7 @@ beforeEach(() => {
   sql.run("INSERT INTO student_slack_mappings VALUES (?, ?, ?, ?)", [STUDENT, course!.id, WS.id, USER]);
   sql.run("INSERT INTO team_members VALUES (?, ?, ?, ?)", [TEAM, STUDENT, course!.id, WS.id]);
   sql.run("INSERT INTO consents VALUES (?, ?, 'granted', 'pilot-form-v1', 1)", [TEAM, STUDENT]);
-  sql.run("INSERT INTO consent_confirmations VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3)", [TEAM, STUDENT, prof!.id]);
+  sql.run("INSERT INTO consent_confirmations VALUES ('hash', ?, ?, 'pilot-form-v1', ?, 2, 99999999999999, 3, (SELECT MAX(id) FROM consent_history))", [TEAM, STUDENT, prof!.id]);
   sql.run("INSERT INTO collection_windows (team_id, started_at) VALUES (?, ?)", [TEAM, START]);
   sent = [];
   const queue = { send: async (body: QueueEnvelope) => { sent.push(body); } } as unknown as Queue<QueueEnvelope>;

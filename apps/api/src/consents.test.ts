@@ -148,7 +148,9 @@ test("consent → withdraw → re-consent keeps history, closes and reopens wind
   clock += HOUR;
   const regranted = consentSchema.parse(await (await setConsent(cookie, "granted", { evidenceRef: "form-0002" })).json());
   expect(regranted.studentConfirmedAt).toBeNull(); // the first confirmation belonged to the first grant
-  expect((await call("/consent-confirmations/confirm", undefined, { token: firstToken, confirmed: true })).status).toBe(200); // replay is a no-op
+  // The old, already confirmed link belongs to the first grant: neither confirm nor lookup answers it any more.
+  expect((await call("/consent-confirmations/confirm", undefined, { token: firstToken, confirmed: true })).status).toBe(404);
+  expect((await call("/consent-confirmations/lookup", undefined, { token: firstToken })).status).toBe(404);
   expect(await code(await activate(cookie))).toBe("CONSENT_REQUIRED");
   await studentConfirms(cookie);
   clock += 1000;
@@ -221,6 +223,50 @@ test("student confirmation links are personal, single use, expire, and die with 
   expect((await call("/consent-confirmations/confirm", undefined, { token: new URL(late.confirmationUrl).hash.slice(1), confirmed: true })).status).toBe(404);
   const consents = await (await call(`/teams/${TEAM}/consents`, await login(profA!.email))).json() as { consents: { studentConfirmedAt: string | null }[] };
   expect(consents.consents[0]!.studentConfirmedAt).toBeNull();
+});
+
+test("grant → confirm → withdraw → grant at the same instant still needs a new confirmation", async () => {
+  const cookie = await login(profA!.email);
+  await setPilot(cookie);
+  await setConsent(cookie, "granted");
+  const token = await studentConfirms(cookie);
+  // The clock does not move: recorded_at and created_at are all equal, only the history row tells the grants apart.
+  await setConsent(cookie, "withdrawn", {});
+  await setConsent(cookie, "granted", { evidenceRef: "form-0002" });
+  expect(consentSchema.parse((await (await call(`/teams/${TEAM}/consents`, cookie)).json() as { consents: unknown[] }).consents[0]).studentConfirmedAt).toBeNull();
+  expect(await code(await activate(cookie))).toBe("CONSENT_REQUIRED");
+  expect(await collectionGate(database.db, { teamId: TEAM, at: clock, now: clock, slackUserId: USER })).toMatchObject({ allowed: false });
+  expect((await call("/consent-confirmations/confirm", undefined, { token, confirmed: true })).status).toBe(404);
+  await studentConfirms(cookie);
+  expect((await activate(cookie)).status).toBe(200);
+});
+
+test("a confirmed link stops answering once its grant is withdrawn, the form changes or the course ends", async () => {
+  const cookie = await login(profA!.email);
+  await setPilot(cookie);
+  await setConsent(cookie, "granted");
+  const lookup = (token: string) => call("/consent-confirmations/lookup", undefined, { token });
+  const confirm = (token: string) => call("/consent-confirmations/confirm", undefined, { token, confirmed: true });
+
+  const withdrawnToken = await studentConfirms(cookie);
+  expect((await lookup(withdrawnToken)).status).toBe(200);
+  await setConsent(cookie, "withdrawn", {});
+  for (const response of [await lookup(withdrawnToken), await confirm(withdrawnToken)]) {
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain("합성 학생");
+  }
+
+  clock += 1000;
+  await setConsent(cookie, "granted", { evidenceRef: "form-0002" });
+  const formToken = await studentConfirms(cookie);
+  await setPilot(cookie, "pilot-form-v2");
+  expect([(await lookup(formToken)).status, (await confirm(formToken)).status]).toEqual([404, 404]);
+  await setPilot(cookie);
+  expect((await lookup(formToken)).status).toBe(200); // back on the form it was issued for
+
+  database.sqlite.run("UPDATE courses SET ends_at = ? WHERE id = ?", [clock, courseA!.id]);
+  expect([(await lookup(formToken)).status, (await confirm(formToken)).status]).toEqual([404, 404]);
+  expect(await code(await call(`/teams/${TEAM}/consents/${STUDENT}/confirmation`, cookie, {}))).toBe("CONSENT_REQUIRED");
 });
 
 test("changing the course form version or deactivating stops collection; the gate follows", async () => {
