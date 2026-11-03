@@ -256,3 +256,29 @@ test("withdrawal between the gate read and intake or consumer commit rolls all s
  expect(database.sqlite.query("SELECT count(*) AS n FROM message_refs").get()).toEqual({n:0});
  expect(database.sqlite.query("SELECT count(*) AS n FROM job_checkpoints WHERE name='apply'").get()).toEqual({n:0});
 });
+
+test("a withdrawal between the consumer's gate check and its write stores nothing", async () => {
+  await post(callback(message(tsAt(START + 1000))));
+  const batch = database.db.batch.bind(database.db);
+  let race = true;
+  database.db.batch = (async statements => {
+    if (race && statements.some(s => (s as unknown as { sql: string }).sql.includes("INSERT INTO message_refs"))) {
+      race = false;
+      database.sqlite.run("UPDATE consents SET status = 'withdrawn'");
+      database.sqlite.run("UPDATE teams SET collection_status = 'paused'");
+    }
+    return batch(statements);
+  }) as typeof database.db.batch;
+  const [body] = sent.splice(0);
+  let retried = false;
+  await consumeMessage({ id: crypto.randomUUID(), body: body!, attempts: 1, ack: () => {}, retry: () => { retried = true; } },
+    new JobStore(database.db, () => clock), { send: async () => {} } as unknown as Queue<QueueEnvelope>, createHandlers(database.db, () => clock));
+  expect(retried).toBe(true);
+  expect(refs()).toEqual([]);
+
+  clock += 60_000;
+  sent.push(body!);
+  await drain();
+  expect(refs()).toEqual([]);
+  expect(outcomes()).toEqual([{ kind: "message", outcome: "ignored:team_inactive", channel_id: CHANNEL }]);
+});

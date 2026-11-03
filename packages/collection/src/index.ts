@@ -63,6 +63,15 @@ export async function collectionGate(
   return { allowed: true, studentId: member.student_id };
 }
 
+/**
+ * A statement to put first in a write batch. It aborts the whole batch unless, at that moment, the team still collects
+ * (active, approved form, course not ended) and every given author still has a valid consent, which closes the gap
+ * between a gate check and its writes. SQLite has no RAISE outside triggers, so json() on a non-JSON string aborts.
+ */
+export function stillCollectable(db: D1Database, teamId: string, authors: Iterable<string>, now: number): D1PreparedStatement {
+  return collectionWriteGuard(db, { teamId, from: now, now, authors: [...new Set(authors)] });
+}
+
 /** Statements that stop collection for a team and close its open window. Safe to repeat; batch them with the cause. */
 export function pauseTeam(db: D1Database, teamId: string, reason: EndReason, at: number): D1PreparedStatement[] {
   return [
