@@ -14,6 +14,10 @@ export type GateResult = { allowed: true; studentId?: string } | { allowed: fals
 /** SQL: the consent_history row behind the student's current consent state (the triggers write one row per change). */
 export const currentHistorySql = (team: string, student: string) =>
   `(SELECT MAX(h.id) FROM consent_history h WHERE h.team_id = ${team} AND h.student_id = ${student})`;
+/** Offline consent may precede mapping; collection may not. */
+export const participantsMappedSql = (team: string) => `NOT EXISTS (
+  SELECT 1 FROM consents p WHERE p.team_id = ${team} AND NOT EXISTS (
+    SELECT 1 FROM team_members m WHERE m.team_id = p.team_id AND m.student_id = p.student_id))`;
 /**
  * SQL predicate: the student has a valid consent right now. Granted, on the course's current form version,
  * and re-confirmed by the student (QR) on a link issued for exactly this grant. Links from before a withdrawal
@@ -44,6 +48,12 @@ export async function collectionGate(
   if (!team.approved) return { allowed: false, reason: "policy_not_approved" };
   if (team.ends_at === null || team.ends_at <= input.now) return { allowed: false, reason: "course_ended" };
   if (!team.in_window) return { allowed: false, reason: "outside_window" };
+  const ready = await db.prepare(`SELECT ${participantsMappedSql("?")} AS mapped,
+    (EXISTS (SELECT 1 FROM team_members WHERE team_id = ?) AND NOT EXISTS (
+      SELECT 1 FROM team_members m WHERE m.team_id = ? AND NOT ${validConsentSql("m.team_id", "m.student_id")})) AS consented`)
+    .bind(input.teamId, input.teamId, input.teamId).first<{ mapped: number; consented: number }>();
+  if (!ready?.mapped) return { allowed: false, reason: "unknown_participant" };
+  if (!ready.consented) return { allowed: false, reason: "consent_missing" };
   if (input.slackUserId === undefined) return { allowed: true };
   const member = await db.prepare(`SELECT m.student_id, ${validConsentSql("m.team_id", "m.student_id")} AS consented
     FROM team_members m JOIN student_slack_mappings s ON s.student_id = m.student_id
