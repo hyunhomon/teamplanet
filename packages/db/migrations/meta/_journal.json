@@ -43,6 +43,13 @@
       "when": 1793077456630,
       "tag": "0005_low_korg",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793157941577,
+      "tag": "0006_tiresome_doorman",
+      "breakpoints": true
     }
   ]
 }

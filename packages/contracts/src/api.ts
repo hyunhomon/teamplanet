@@ -81,6 +81,18 @@ export const teamListResponseSchema = z.strictObject({ teams: z.array(teamSchema
 export const studentListResponseSchema = z.strictObject({ students: z.array(studentSchema) });
 export const teamMemberListResponseSchema = z.strictObject({ members: z.array(teamMemberSchema) });
 export const consentListResponseSchema = z.strictObject({ consents: z.array(consentSchema) });
+// #6: what a professor needs to see about the pilot workspace. Never carries tokens or Slack secrets.
+export const slackConnectionSchema = z.strictObject({
+  status: z.enum(["not_connected", "connected", "insufficient_scope", "revoked"]),
+  workspace: z.strictObject({
+    id: workspaceIdSchema, slackTeamId: slackTeamIdSchema, name: nameSchema, installedAt: dateTimeSchema,
+  }).nullable(),
+  missingScopes: z.array(z.string()),
+});
+// Result the OAuth callback appends to its redirect back to the web app: `/workspace?slack=<outcome>`.
+export const slackInstallOutcomeSchema = z.enum([
+  "installed", "reinstalled", "insufficient_scope", "cancelled", "invalid_state", "workspace_mismatch", "failed",
+]);
 export const teamParamsSchema = z.strictObject({ teamId: teamIdSchema });
 export const courseParamsSchema = z.strictObject({ courseId: courseIdSchema });
 export const teamStudentParamsSchema = z.strictObject({ teamId: teamIdSchema, studentId: studentIdSchema });
@@ -125,6 +137,8 @@ export type TeamListResponse = z.infer<typeof teamListResponseSchema>;
 export type StudentListResponse = z.infer<typeof studentListResponseSchema>;
 export type TeamMemberListResponse = z.infer<typeof teamMemberListResponseSchema>;
 export type ConsentListResponse = z.infer<typeof consentListResponseSchema>;
+export type SlackConnection = z.infer<typeof slackConnectionSchema>;
+export type SlackInstallOutcome = z.infer<typeof slackInstallOutcomeSchema>;
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type ApiErrorCode = ApiError["error"]["code"];
 

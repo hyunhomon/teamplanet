@@ -1,6 +1,6 @@
 # API Contract
 
-이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3에서 구현했다. Slack·동의 기능은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
+이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3, Slack 설치·연결 상태는 #6에서 구현했다. Slack 채널·Events·동의 기능은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
 
@@ -65,7 +65,7 @@ WHERE s.id = :student_id AND c.professor_id = :session_professor_id;
 
 멤버/동의 변경은 팀과 학생이 같은 수업·workspace인지 및 실제 참가자인지도 확인한다. run/evidence/assessment는 팀을 통해 같은 소유권 조인을 적용한다. 기존 분석·동의 ID에는 신규 FK를 소급 적용하지 않는다. DB 제약이 세션 권한 검사나 동의 gate를 대신하지 않는다.
 
-미인증/만료 세션은 401, 자기 소유가 아닌 리소스와 없는 리소스는 같은 404다. 403은 Origin/CSRF 등 리소스 존재 여부와 관계없는 거부에 쓴다. 목록은 세션 교수 소유 데이터만 반환한다. Slack callback/events의 state/서명 인증은 #6/#11에서 구현한다.
+미인증/만료 세션은 401, 자기 소유가 아닌 리소스와 없는 리소스는 같은 404다. 403은 Origin/CSRF 등 리소스 존재 여부와 관계없는 거부에 쓴다. 목록은 세션 교수 소유 데이터만 반환한다. Slack OAuth callback의 state 검증은 #6, Events 서명 인증은 #11에서 구현한다.
 
 ### 서버 가드 — #3 (`apps/api/src/guard.ts`)
 
@@ -76,7 +76,7 @@ WHERE s.id = :student_id AND c.professor_id = :session_professor_id;
 3. 경로 ID 형식이 틀리면 400 `VALIDATION_ERROR`.
 4. `owned(context, kind, id)`가 null이면 404 `NOT_FOUND`. `kind`는 `course | team | student | run | evidence`이며 모두 `courses.professor_id = 세션 교수`까지 조인한다. assessment는 run 소유권으로 확인한다.
 
-Slack OAuth callback과 Events는 교수 세션이 아니라 state/서명으로 인증하므로 #6/#11에서 1·2단계 예외 목록에 추가한다. 예외 경로도 학생 데이터 접근 전에 자체 검증을 통과해야 한다. `/v1/health`는 학생·교수 데이터를 반환하지 않는다.
+Slack OAuth callback은 GET이라 1단계 대상이 아니고, 2단계 예외에 추가해 자체 state 검증을 한다(#6). Events(#11)는 서명으로 인증하므로 1·2단계 예외에 추가한다. 예외 경로도 학생 데이터 접근 전에 자체 검증을 통과해야 한다. `/v1/health`는 학생·교수 데이터를 반환하지 않는다.
 
 감사 로그는 `audit_events`(`actor_professor_id, action, target_type, target_id, result, recorded_at`)다. `audit(context, event, now)`는 INSERT 문을 반환하므로 감사 대상 쓰기와 `DB.batch`로 원자적으로 묶거나 단독 `.run()` 한다. 열은 ID와 열거값뿐이며 본문·요약·이름·OTP·토큰을 넣을 자리가 없다. `result`는 `succeeded | denied`이며 남의 리소스 조회 시도도 `denied`로 남는다. 동의 변경(#8)·데이터 열람(#22)·평가 확정(#23)은 `AuditAction`에 값을 추가해 같은 방식으로 기록한다. 보관 만료 정리는 #14 범위다.
 
@@ -196,7 +196,23 @@ SELECT workspace_id, name, count(*) FROM teams GROUP BY workspace_id, name HAVIN
 
 비동기 작업은 `packages/contracts/src/jobs.ts`의 version 1 `QueueEnvelope`와 event/run:stage:chunk 멱등 key를 사용한다. 원문·토큰 대신 저장소 참조만 전달한다. 실제 handler 등록 전 작업은 성공으로 처리하지 않는다. 공개 HTTP 큐 발행/복구 엔드포인트는 추가하지 않으며 내부 producer와 운영자 도구를 사용한다. 재시도·DLQ·체크포인트 계약은 `QUEUE_OPERATIONS.md`를 참고한다.
 
-Slack 설치/OAuth/연결/이벤트 상세는 #6/#11에서 정의한다: GET `/slack/install`, `/slack/oauth/callback`, `/slack/connection`, POST `/slack/events`.
+## Slack 설치·연결 — #6 (`apps/api/src/slack.ts`)
+
+단일 파일럿 workspace 하나에 bot을 설치한다. 앱 설정은 [`apps/api/slack-manifest.json`](../apps/api/slack-manifest.json)이고 절차는 [SLACK_ONBOARDING.md](SLACK_ONBOARDING.md) 1단계다. POST `/slack/events`는 #11에서 추가한다.
+
+| Method / Path | 인증 | 응답 |
+|---|---|---|
+| GET `/slack/install` | 교수 세션 | 302 → `https://slack.com/oauth/v2/authorize`. 설정 secret이 없으면 `SLACK_UNAVAILABLE`/503 |
+| GET `/slack/oauth/callback` | state + 같은 세션 | 항상 302 → `/workspace?slack=<outcome>` (`slackInstallOutcomeSchema`) |
+| GET `/slack/connection` | 교수 세션 | 200 / `slackConnectionSchema`: `{status, workspace, missingScopes}`. Slack 확인 실패는 `SLACK_UNAVAILABLE`/503(retryable) |
+
+- **Bot scope:** `channels:history`, `channels:join`, `channels:manage`, `channels:read`, `files:read`, `users:read`. 공개 채널만 쓰므로 `groups:*`/`im:*`는 요청하지 않는다. 2026-10-28 docs.slack.dev의 각 메서드 문서로 확인했다. 테스트가 manifest와 코드 목록이 같은지 검사한다.
+- **state:** 32바이트 난수. DB에는 SHA-256만 저장하고 시작한 세션 토큰 해시에 묶는다. 10분 만료, 조건부 UPDATE로 한 번만 쓴다. 다른 세션·재사용·만료·위조는 모두 `invalid_state`다. SameSite=Lax 세션 쿠키는 Slack에서 돌아오는 최상위 GET 이동에 실린다.
+- **결과(outcome):** `installed`, `reinstalled`, `insufficient_scope`(설치는 저장, 부족 scope 표시), `cancelled`(Slack `error=access_denied`), `invalid_state`, `workspace_mismatch`, `failed`(코드 교환 실패·user token·enterprise 설치·설정 누락). 웹은 이 값을 안내 문구로만 쓴다.
+- **단일 workspace:** 처음 설치가 `workspaces` 행을 만든다. 다른 Slack team이면 기존 행과 토큰을 바꾸지 않고 `workspace_mismatch`와 `slack.install`/`denied` 감사 행을 남긴다. 같은 team 재설치는 교수와 무관하게 설치 행을 교체한다.
+- **토큰 저장:** bot token(`xoxb-`)은 `SLACK_TOKEN_KEY`(32바이트 base64 secret)로 AES-GCM 암호화해 `slack_installations.token_ciphertext`에 둔다. workspace ID를 AAD로 써서 다른 행에서는 열리지 않는다. client secret은 Basic 인증 헤더로만 보낸다. 응답·로그·감사에는 토큰·code·secret이 없고 로그는 Slack 오류 코드만 남긴다.
+- **연결 확인:** `auth.test`만 호출하고 `x-oauth-scopes` 헤더로 현재 scope를 비교한다. 메시지·파일·멤버를 읽지 않으므로 동의 전 백필이 없다. `token_revoked`·`invalid_auth`·`account_inactive`·`token_expired`·`not_authed`면 토큰을 지우고 `revoked`로 바꾼다. rate limit·장애는 철회로 보지 않고 503이다. 다시 설치하면 `connected`로 돌아온다.
+- **상태:** `not_connected | connected | insufficient_scope | revoked`. 채널별 bot membership 확인은 #7, Events의 `app_uninstalled`/`tokens_revoked` 즉시 반영은 #11 범위다.
 
 분석은 POST `/analysis-runs` (`analysisRunRequestSchema`: `{teamId,from,to}`), GET `/analysis-runs/:id`, `/analysis-runs/:id/assessments`, POST `/analysis-runs/:id/finalize`를 유지한다. 상태는 `queued → collecting → evidence_extraction → assessment → review → awaiting_professor → finalized`, 오류 상태는 `blocked_provider_billing`, `failed_provider_auth`, `rate_limited`, `failed_model`, `failed_data`, `cancelled`다. `CompetencyAssessment`의 근거·반례·limitations·requiresHumanReview를 보존한다.
 

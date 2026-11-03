@@ -6,13 +6,14 @@ import { authRoutes, defaultAuthDeps, type AuthDeps } from "./auth";
 import { courseRoutes } from "./courses";
 import { apiError } from "./errors";
 import { requireSession, type ProtectedEnv } from "./guard";
+import { slackRoutes, type SlackBindings, type SlackFetch } from "./slack";
 import { teamRoutes } from "./teams";
 import type { MailBindings } from "./mailer";
 
-export type Bindings = { DB: D1Database; WORK_QUEUE: Queue<QueueEnvelope> } & MailBindings;
+export type Bindings = { DB: D1Database; WORK_QUEUE: Queue<QueueEnvelope> } & MailBindings & SlackBindings;
 const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
-export function createApp(authDeps: AuthDeps = defaultAuthDeps) {
+export function createApp(authDeps: AuthDeps = defaultAuthDeps, slackFetch: SlackFetch = (url, init) => fetch(url, init)) {
   const app = new Hono<{ Bindings: Bindings; Variables: ProtectedEnv["Variables"] }>();
 
   app.use("*", secureHeaders());
@@ -20,7 +21,7 @@ export function createApp(authDeps: AuthDeps = defaultAuthDeps) {
     context.header("Cache-Control", "no-store");
     await next();
   });
-  // Browser state changes must come from the page's own origin. Slack callbacks (#6/#11) need their own exemption.
+  // Browser state changes must come from the page's own origin. Slack Events (#11) will need its own exemption.
   app.use("/v1/*", async (context, next) => {
     if (!safeMethods.has(context.req.method) && context.req.header("Origin") !== new URL(context.req.url).origin) {
       return apiError(context, "FORBIDDEN", "허용되지 않은 요청 출처입니다.");
@@ -41,6 +42,7 @@ export function createApp(authDeps: AuthDeps = defaultAuthDeps) {
   app.route("/v1/auth", authRoutes(authDeps));
   app.route("/v1", courseRoutes(authDeps.now));
   app.route("/v1", teamRoutes(authDeps.now));
+  app.route("/v1", slackRoutes(authDeps.now, slackFetch));
 
   app.notFound(context => apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다."));
   app.onError((_error, context) => apiError(context, "INTERNAL_SERVER_ERROR", "요청을 처리하지 못했습니다."));
