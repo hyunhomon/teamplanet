@@ -87,7 +87,9 @@ export async function purgeTeam(db: D1Database, teamId: string, now: number) {
     // Remove related audit records before referenced evidence/run rows disappear.
     writes.push(db.prepare(`DELETE FROM audit_events WHERE target_id = ? OR target_id IN (${runIds})
       OR target_id IN (SELECT id FROM evidence_events WHERE run_id IN (${runIds}))
-      OR target_id IN (SELECT student_id FROM team_members WHERE team_id = ?)`)
+      OR target_id IN (SELECT own.student_id FROM team_members own WHERE own.team_id = ?
+        AND NOT EXISTS (SELECT 1 FROM team_members other JOIN team_data_versions v ON v.team_id = other.team_id
+          WHERE other.student_id = own.student_id AND other.team_id <> own.team_id AND v.purged_at IS NULL))`)
       .bind(teamId, teamId, teamId, teamId));
     for (const table of ["analysis_stage_results", "analysis_chunks", "analysis_sources", "analysis_specs", "assessments", "evidence_events", "run_data_validity"]) writes.push(db.prepare(`DELETE FROM ${table} WHERE run_id IN (${runIds})`).bind(teamId));
     writes.push(db.prepare("DELETE FROM analysis_runs WHERE team_id = ?").bind(teamId));
