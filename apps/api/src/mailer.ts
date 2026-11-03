@@ -13,12 +13,13 @@ export function resendMailer(apiKey: string, from: string, send: typeof fetch = 
         from, to: [to], subject: "TeamPlanet 로그인 코드",
         text: `TeamPlanet 로그인 코드: ${code}\n\n5분 안에 입력하세요. 직접 요청하지 않았다면 이 메일을 무시하세요.`,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`EMAIL_PROVIDER_STATUS_${response.status}`);
   };
 }
 
-/** Console delivery needs both the explicit .dev.vars flag and a loopback request host. null: no provider configured. */
+/** Console delivery needs both the explicit .dev.vars flag and a loopback request host. */
 export function defaultMailer(env: MailBindings, url: URL): Mailer | null {
   if (env.AUTH_DEV_LOG_OTP === "true" && loopback.has(url.hostname)) {
     return async ({ to, code }) => console.log(`[local dev only] TeamPlanet OTP for ${to}: ${code}`);
