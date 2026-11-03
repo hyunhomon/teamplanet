@@ -1,6 +1,6 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { JobError, type JobContext } from "@teamplanet/queue";
-import { collectionGate } from "./index";
+import { collectionGate, pilotReadySql, validConsentSql } from "./index";
 import { mergeMessage, SLACK_TS, slackTsMs } from "./events";
 import { callSlack, openToken, sha256Hex, type SlackFetch } from "./slack";
 
@@ -28,8 +28,15 @@ const encodeCursor = (cursor: string) => cursor.replaceAll("+", "-").replaceAll(
 const decodeCursor = (reference: string) => reference.replaceAll("-", "+").replaceAll(".", "=");
 const validTs = (value: unknown) => (typeof value === "string" && SLACK_TS.test(value) ? value : null);
 class Stop extends Error { constructor(readonly reason: string) { super(reason); } }
+/** A page's next cursor, or undefined at its real end. A page that contradicts itself is retried, never taken as the end. */
+function nextCursor(page: Record<string, any>): string | undefined {
+  if (!Array.isArray(page.messages) || typeof page.has_more !== "boolean") throw new JobError("UPSTREAM_UNAVAILABLE", true);
+  const next = typeof page.response_metadata?.next_cursor === "string" ? page.response_metadata.next_cursor : "";
+  if (page.has_more !== Boolean(next)) throw new JobError("UPSTREAM_UNAVAILABLE", true);
+  return next || undefined;
+}
 
-type Counters = { merged: number; excluded: number };
+type Counters = { merged: number; excluded: number; authors: Set<string> };
 
 export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context: JobContext) {
   const { db, now } = deps;
@@ -48,13 +55,31 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       VALUES (?, ?, ?, ?, 'running', ?, ?) ON CONFLICT (request_id) DO NOTHING`).bind(requestId, teamId, fromMs, toMs, runStart, runStart)]);
   }
   const progress = (counters: Counters, extra: string = "") => db.prepare(`UPDATE collection_coverage SET merged = merged + ?, excluded = excluded + ?${extra}, updated_at = ? WHERE request_id = ?`);
-  const finish = (status: "complete" | "partial" | "failed", reason: string | null, limitations: string[]) =>
-    context.commit("done", reason ? `${status}:${reason}` : status, [db.prepare("UPDATE collection_coverage SET status = ?, reason = ?, limitations_json = ?, updated_at = ? WHERE request_id = ?")
-      .bind(status, reason, JSON.stringify(limitations), now(), requestId)]);
-
   const teamGate = async () => {
     const gate = await collectionGate(db, { teamId, at: now(), now: now() });
     if (!gate.allowed) throw new Stop(gate.reason);
+  };
+  // The gate again, inside the same D1 batch as the writes: if the team or a merged author lost collection rights after take()
+  // looked, the whole batch (refs, sweep, counters, cursor, status) rolls back. SQLite has no RAISE outside triggers, so the
+  // json() parse error of a non-JSON string is what aborts it.
+  const stillAllowed = (authors: Set<string>) => db.prepare(`SELECT json(CASE WHEN
+      EXISTS (SELECT 1 FROM teams gt WHERE gt.id = ? AND gt.collection_status = 'active' AND ${pilotReadySql("gt.course_id", "?")})
+      AND (SELECT COUNT(DISTINCT gs.slack_user_id) FROM team_members gm JOIN student_slack_mappings gs ON gs.student_id = gm.student_id
+        WHERE gm.team_id = ? AND gs.slack_user_id IN (${[...authors].map(() => "?").join(", ")}) AND ${validConsentSql("gm.team_id", "gm.student_id")}) = ?
+    THEN '1' ELSE 'collection_gate_closed' END)`).bind(teamId, now(), teamId, ...authors, authors.size);
+  async function commit(name: string, reference: string, writes: D1PreparedStatement[], authors = new Set<string>()) {
+    try {
+      await context.commit(name, reference, [stillAllowed(authors), ...writes]);
+    } catch (error) {
+      await teamGate(); // a closed team gate fails the coverage; anything else (one author's consent, D1) is retried
+      throw error;
+    }
+  }
+  const finish = (status: "complete" | "partial" | "failed", reason: string | null, limitations: string[]) => {
+    const write = db.prepare("UPDATE collection_coverage SET status = ?, reason = ?, limitations_json = ?, updated_at = ? WHERE request_id = ?")
+      .bind(status, reason, JSON.stringify(limitations), now(), requestId);
+    const reference = reason ? `${status}:${reason}` : status;
+    return status === "failed" ? context.commit("done", reference, [write]) : commit("done", reference, [write]);
   };
   let token = "";
   async function slack(method: string, params: Record<string, string>) {
@@ -84,6 +109,7 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       return;
     }
     counters.merged++;
+    counters.authors.add(message.user);
     writes.push(mergeMessage(db, {
       teamId, channelId: channel, slackTs: ts, userId: message.user, threadTs: validTs(message.thread_ts),
       revision: validTs(message.edited?.ts) ?? ts, contentHash: await sha256Hex(typeof message.text === "string" ? message.text : ""), source: "history",
@@ -105,8 +131,8 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       const page = await slack("conversations.replies", {
         channel, ts: root, oldest: msToTs(a), latest: msToTs(b), inclusive: "true", limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}),
       });
-      for (const reply of Array.isArray(page.messages) ? page.messages : []) if (reply?.ts !== root) await take(reply, a, b, writes, counters);
-      cursor = page.has_more && page.response_metadata?.next_cursor ? String(page.response_metadata.next_cursor) : undefined;
+      cursor = nextCursor(page);
+      for (const reply of page.messages) if (reply?.ts !== root) await take(reply, a, b, writes, counters);
       await context.heartbeat();
     } while (cursor);
     sweep(writes, a, b, "thread_ts = ? AND slack_ts <> ?", root);
@@ -128,17 +154,17 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
         channel, oldest: msToTs(a), latest: msToTs(b), inclusive: "true", limit: PAGE_LIMIT, ...(cursor ? { cursor } : {}),
       });
       const writes: D1PreparedStatement[] = [];
-      const counters = { merged: 0, excluded: 0 };
-      for (const message of Array.isArray(body.messages) ? body.messages : []) {
+      const counters = { merged: 0, excluded: 0, authors: new Set<string>() };
+      const next = nextCursor(body);
+      for (const message of body.messages) {
         await take(message, a, b, writes, counters);
         const ts = validTs(message?.ts);
         if (ts && Number(message.reply_count) > 0 && message.thread_ts === ts && slackTsMs(ts) >= a && slackTsMs(ts) < b) await thread(ts, a, b, writes, counters);
       }
-      const next = body.has_more && body.response_metadata?.next_cursor ? String(body.response_metadata.next_cursor) : undefined;
       if (next && encodeCursor(next).length > 200) throw new JobError("DATA_INVALID", false);
       if (!next) sweep(writes, a, b, "(thread_ts IS NULL OR thread_ts = slack_ts)");
       writes.push(progress(counters).bind(counters.merged, counters.excluded, now(), requestId));
-      await context.commit(`h${index}p${page}`, next ? encodeCursor(next) : "end", writes);
+      await commit(`h${index}p${page}`, next ? encodeCursor(next) : "end", writes, counters.authors);
       await context.heartbeat();
       cursor = next;
       page++;
@@ -149,10 +175,10 @@ export async function recoverHistory(deps: HistoryDeps, job: HistoryJob, context
       const { results } = await db.prepare(`SELECT DISTINCT thread_ts FROM message_refs WHERE team_id = ? AND channel_id = ?
         AND slack_ts >= ? AND slack_ts < ? AND thread_ts IS NOT NULL AND thread_ts < ?`).bind(teamId, channel, msToTs(a), msToTs(b), msToTs(a)).all<{ thread_ts: string }>();
       const writes: D1PreparedStatement[] = [];
-      const counters = { merged: 0, excluded: 0 };
+      const counters = { merged: 0, excluded: 0, authors: new Set<string>() };
       for (const { thread_ts: root } of results) await thread(root, a, b, writes, counters);
       writes.push(progress(counters, ", old_thread_roots = old_thread_roots + ?").bind(counters.merged, counters.excluded, results.length, now(), requestId));
-      await context.commit(`h${index}old`, String(results.length), writes);
+      await commit(`h${index}old`, String(results.length), writes, counters.authors);
     }
   }
 

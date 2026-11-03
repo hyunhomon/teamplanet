@@ -273,9 +273,10 @@ HTTP API는 없다. 분석(#16)이 `slack.history` job(`{requestId, teamId, from
 
 - **확인한 Slack 조건(2026-10-28, docs.slack.dev):** `conversations.history`·`conversations.replies`는 bot `channels:history`(공개 채널), Tier 3(분당 50회 이상). 2025-05-29 비 Marketplace 상용 앱 제한(분당 1회·15개)은 내부 custom app에 적용되지 않는다. 이 앱을 다른 조직에 배포하면 적용되므로 그때 다시 확인한다. 페이지는 200개, cursor 기반이다.
 - **범위:** 팀의 허용 구간(`collection_windows`)과 요청 `[fromMs, toMs)`의 교집합만 읽는다. Slack에는 `oldest`/`latest`를 inclusive로 보내고 `start ≤ ts < end`인 메시지만 남긴다. Slack ts `s.micro`는 ms로 내림해 비교하며 같은 ts의 구간 시작은 포함, 끝은 제외다. 활성화 전 시각은 Slack에 묻지도 않는다. 요청 범위에 허용 구간 밖 시간이 있으면 `partial` + `outside_allowed_window`다.
-- **gate:** 페이지마다 팀 단위 `collectionGate`, 메시지마다 작성자 동의를 확인한다. 동의 없는 작성자·봇·시스템 메시지는 저장하지 않고 `excluded` + `unconsented_author_excluded`로 남긴다. 팀이 멈추면 `failed`/`team_inactive`로 끝낸다.
+- **gate:** 페이지마다 팀 단위 `collectionGate`, 메시지마다 작성자 동의를 확인한다. 동의 없는 작성자·봇·시스템 메시지는 저장하지 않고 `excluded` + `unconsented_author_excluded`로 남긴다. 팀이 멈추면 `failed`/`team_inactive`로 끝낸다. 페이지·스레드·완료 쓰기는 같은 D1 batch 안에서 팀 활성·정책·종강과 병합 작성자의 동의를 다시 확인하고, 그사이 철회·멈춤이 있으면 batch 전체(참조, 삭제 보정, 개수, cursor, 완료 상태)를 되돌린다. 팀이 멈췄으면 `failed`, 작성자 동의만 바뀌었으면 재시도해 그 작성자를 제외한다.
 - **스레드:** 구간 안 루트(`reply_count > 0`)는 replies를 끝까지 읽는다. 구간보다 먼저 시작한 스레드는 Events로 알려진 루트만 replies를 읽고, 루트 자체는 가져오지 않는다(`thread_root_outside_window`). Events로도 모르는 오래된 스레드의 새 답글은 놓칠 수 있어 모든 coverage에 `older_thread_replies_from_events_only`를 붙인다.
 - **병합:** #11과 같은 `mergeMessage`라 중복 없이 더 새로운 revision만 반영하고 tombstone은 되살아나지 않는다. 본문은 지문 계산 중에만 메모리에 있다. 실행 시작 시각을 `verified_at`으로 찍고, 구간을 끝까지 읽은 뒤 실행 전에 있던 참조 중 Slack에 없는 것을 삭제(tombstone)로 보정한다(`tombstoned`). 동의가 없어 저장하지 않은 메시지도 "본 것"으로 찍어 삭제로 오인하지 않는다.
+- **페이지 검증:** `messages` 배열과 `has_more`가 없거나, `has_more`와 `next_cursor`가 서로 맞지 않는 응답(예: `has_more: true`인데 cursor 없음)은 끝으로 보지 않고 재시도한다. 그런 응답으로는 삭제 보정이나 완료를 하지 않는다(History·Replies 공통).
 - **재개:** 페이지마다 cursor를 job checkpoint(`h<구간>p<페이지>`)에 병합 쓰기와 같은 트랜잭션으로 저장한다. 중단·재시도 시 마지막 cursor부터 이어서 읽는다. 429는 Slack `Retry-After`로 job을 재시도하고, 네트워크·일시 오류도 재시도한다.
 - **실패는 데이터 없음이 아니다:** `missing_scope`, `not_in_channel`, `channel_not_found`, 토큰 철회 등은 `failed`/`<오류 코드>`로 끝난다. 재시도가 바닥나 job이 dead가 되면 coverage는 `running`으로 남는다. 분석은 `complete`만 전체 수집으로 보고 `running`·`partial`·`failed`는 한계로 표시해야 한다.
 

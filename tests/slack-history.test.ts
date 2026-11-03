@@ -200,3 +200,50 @@ test("permission problems, a paused team or a missing key fail the coverage inst
   expect(await run(START, START + HOUR, "00000000-0000-4000-8000-0000000000c3")).toBe(false); // unreadable token is retried, not reported as empty
   expect(refs()).toEqual([]);
 });
+
+test("a page that says it has more but gives no cursor is retried, never swept or completed", async () => {
+  const kept = (slackTs: string, thread: string | null = null) => database.sqlite.run(`INSERT INTO message_refs (team_id, channel_id, slack_ts, user_id, thread_ts, revision,
+    content_hash, source, first_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'hash', 'event', ?, ?)`, [TEAM, CHANNEL, slackTs, USER, thread, slackTs, START, START]);
+  const root = msg(START + 1000, { reply_count: 1, thread_ts: ts(START + 1000) });
+  kept(ts(START + 3000));
+  kept(ts(START + 4000), root.ts);
+  channel = [root];
+  const broken = new Response(JSON.stringify({ ok: true, messages: [], has_more: true }));
+  for (const [method, requestId] of [["conversations.history", REQUEST], ["conversations.replies", "00000000-0000-4000-8000-0000000000c4"]] as const) {
+    intercept = called => (called === method ? broken.clone() : undefined);
+    expect(await run(START, START + 5 * HOUR, requestId)).toBe(false);
+    expect(coverage(requestId)).toMatchObject({ status: "running", tombstoned: 0 });
+  }
+  expect(refs().filter(r => r.deleted)).toEqual([]);
+  expect(retried).toHaveLength(2);
+});
+
+test("consent withdrawn or the team paused after the gate check rolls the page back", async () => {
+  channel = [msg(START + 1000)];
+  const batch = database.db.batch.bind(database.db);
+  let race: (() => void) | undefined;
+  database.db.batch = (async statements => {
+    if (race && statements.some(s => (s as unknown as { sql: string }).sql.includes("INSERT INTO message_refs"))) { race(); race = undefined; }
+    return batch(statements);
+  }) as typeof database.db.batch;
+
+  // One author's consent goes away: the page is retried and the next attempt leaves that author out.
+  race = () => database.sqlite.run("UPDATE consents SET status = 'withdrawn'");
+  expect(await run()).toBe(false);
+  expect(refs()).toEqual([]);
+  clock += 60_000;
+  expect(await run()).toBe(true);
+  expect(refs()).toEqual([]);
+  expect(coverage()).toMatchObject({ status: "complete", merged: 0, excluded: 1 });
+
+  // The whole team stops: the page rolls back and the coverage fails instead of completing.
+  database.sqlite.run("UPDATE consents SET status = 'granted'");
+  const requestId = "00000000-0000-4000-8000-0000000000c5";
+  race = () => {
+    database.sqlite.run("UPDATE consents SET status = 'withdrawn'");
+    database.sqlite.run("UPDATE teams SET collection_status = 'paused'");
+  };
+  expect(await run(START, START + 5 * HOUR, requestId)).toBe(true);
+  expect(refs()).toEqual([]);
+  expect(coverage(requestId)).toMatchObject({ status: "failed", reason: "team_inactive", merged: 0 });
+});
