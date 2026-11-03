@@ -1,0 +1,1 @@
+ALTER TABLE `consent_confirmations` ADD `consent_history_id` integer REFERENCES consent_history(id);

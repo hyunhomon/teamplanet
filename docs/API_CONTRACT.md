@@ -100,7 +100,7 @@ routes.get("/teams/:teamId", async context => {
 
 `code`는 앞자리 0을 보존하는 6자리 문자열이다. `Professor`는 `{id, email, createdAt}`이며 세션 토큰·OTP는 응답 본문에 넣지 않는다. 세션 쿠키는 `__Host-teamplanet_session`, `HttpOnly; Secure; SameSite=Lax; Path=/`, Domain 없음이다. 로컬 HTTP 쿠키 운용은 #2에서 명시적으로 분리하며 production 플래그를 약화하지 않는다. 브라우저는 같은 origin `/v1`과 `credentials: "same-origin"`을 쓴다. 변경 요청은 서버의 Origin/CSRF 검사를 통과해야 한다. 만료·회전·서버 세션 무효화·저장소는 #2 구현 범위다. 로그아웃은 반복 호출에도 200, 로그인하지 않은 `/auth/me`는 `UNAUTHENTICATED`/401이다. 인증 응답은 `Cache-Control: no-store`다.
 
-OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성공/실패 형태·타이밍 정책을 사용한다. 메일 제공자 실패를 발송 성공으로 꾸미지 않는다. 허용 기준·제공자·만료/시도/쿨다운 수치는 #2에서 설정으로 정하며 fixture 숫자를 운영 정책으로 확정하지 않는다. 오입력/재사용/경합 실패는 `OTP_INVALID`, 만료는 `OTP_EXPIRED`, 반복 시도는 `RATE_LIMITED`, 발송 장애는 `EMAIL_DELIVERY_UNAVAILABLE`다. UI는 `resendAvailableAt`까지 기다리고 서버의 429 및 `retryAfterSeconds`/`Retry-After`를 우선한다.
+OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성공/실패 형태·타이밍 정책을 사용한다. 메일 제공자 실패를 발송 성공으로 꾸미지 않는다. 허용 기준·제공자·만료/시도/쿨다운 수치는 #2에서 설정으로 정하며 fixture 숫자를 운영 정책으로 확정하지 않는다. 오입력/재사용/경합 실패는 `OTP_INVALID`, 만료는 `OTP_EXPIRED`, 반복 시도는 `RATE_LIMITED`, 서비스 설정 오류는 `EMAIL_DELIVERY_UNAVAILABLE`이며, 개별 전달 실패는 공개하지 않고 아래 운영 진단으로 확인한다. UI는 `resendAvailableAt`까지 기다리고 서버의 429 및 `retryAfterSeconds`/`Retry-After`를 우선한다.
 
 #2 구현 정책(`apps/api/src/auth.ts`의 `authPolicy`):
 
@@ -114,7 +114,7 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 | 열거 방지 | 미등록 이메일도 같은 202·challenge·발송 제한. 메일은 보내지 않음. OTP 요청 응답은 최소 1초 |
 | Origin | `/v1/*`의 GET/HEAD/OPTIONS 외 요청은 `Origin`이 요청 URL origin과 같아야 함. 아니면 `FORBIDDEN`/403 |
 
-등록 교수에게 메일 제공자가 실패하면 `EMAIL_DELIVERY_UNAVAILABLE`/503이고 challenge를 지운다. 이 응답은 등록 이메일에서만 나오므로 제공자 장애 중에는 등록 여부가 드러날 수 있다. 성공으로 꾸미지 않는다는 계약을 우선했다. 발송 제한은 이메일 기준이라 제3자가 특정 교수의 시간당 요청 한도를 소진시킬 수 있다.
+`202`는 요청 접수이며 메일 전달 성공 응답이 아니다. 등록 이메일의 발송은 Worker `waitUntil`에서 실행해 공급자 지연/실패가 공개 응답과 시간에 반영되지 않는다. 발송 실패는 고정 코드 `auth.email_delivery_failed`로 운영자에게 보고하고 challenge의 교수 연결을 제거해 검증 불가능하게 하되 제한 계산용 행은 보존한다. 미등록 이메일과 동일한 쿨다운·시간당/검증 시도 제한을 유지한다. UI는 발송 성공을 표시하지 않고 요청 접수·수신 확인을 안내한다. 메일 서비스 설정 누락은 이메일 조회 전에 모든 주소에 동일한 `EMAIL_DELIVERY_UNAVAILABLE`/503이다. 실제 전달은 운영자의 테스트 이메일 수신으로 확인하며 운영 로그에 이메일·OTP·토큰·공급자 본문을 남기지 않는다. 발송 제한은 이메일 기준이므로 제3자가 특정 주소의 시간당 한도를 소진시킬 수 있다.
 
 ## 수업·팀·학생 계약 — 구현은 #3/#7
 
@@ -170,9 +170,9 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 ### 동의 gate 구현 — #8 (`apps/api/src/consents.ts`, `packages/collection`)
 
 - **승인된 동의서 버전:** `consent_policies`에 운영자가 D1로 직접 넣은 버전만 승인된 것이다. 행은 동의서와 모델 전송 고지(ADR-0003)를 확인했다는 뜻이며 API로는 추가할 수 없다. 교수는 `PUT /courses/:courseId/pilot`로 승인된 버전과 실제 수업 종료일(미래)을 정한다. 버전을 바꾸면 그 수업의 활성 팀이 즉시 `policy_changed`로 멈추고, 이전 버전의 동의는 무효다.
-- **유효한 동의(서버 판정):** ① `consents.status = granted`, ② 수업의 현재 버전, ③ 그 grant 이후에 발급된 학생 QR 확인 링크로 학생이 재확인. 셋 중 하나라도 없으면 미동의다. 교수의 `granted` 기록에는 `evidenceRef`(종이 동의서 번호 같은 불투명 참조, 개인정보 금지)가 필요하다.
+- **유효한 동의(서버 판정):** ① `consents.status = granted`, ② 수업의 현재 버전, ③ 바로 그 grant(현재 상태를 만든 `consent_history` 행)에 묶여 발급된 학생 QR 확인 링크로 학생이 재확인. 링크는 `consent_confirmations.consent_history_id`로 grant에 묶이므로, 같은 시각에 철회→재동의가 일어나도 이전 링크는 새 grant에 쓰이지 않는다. migration `0008` 이전 링크(NULL)는 어떤 grant에도 묶이지 않아 재발급이 필요하다. 셋 중 하나라도 없으면 미동의다. 교수의 `granted` 기록에는 `evidenceRef`(종이 동의서 번호 같은 불투명 참조, 개인정보 금지)가 필요하다.
 - **이력:** `consents` upsert가 기존 트리거로 `consent_history`를 쓴다. 같은 batch에서 `consent_evidence`가 그 이력 행에 기록 교수와 `evidenceRef`를 붙인다. 같은 상태·버전 반복 PUT은 아무것도 쓰지 않아 학생 재확인을 무효로 만들지 않는다. 팀 멤버가 아닌 학생은 404다.
-- **학생 재확인:** `POST …/confirmation`이 학생별 일회용 링크 `/consent/confirm#<token>`을 만든다(7일, 해시만 저장, 새 링크가 이전 미사용 링크를 지움). 토큰은 URL fragment와 요청 본문으로만 오가므로 서버 로그·Referer에 남지 않는다. `/v1/consent-confirmations/*`는 교수 세션 대신 토큰으로 인증하고 Origin 검사는 그대로 받는다. 확인은 그 링크가 발급된 grant가 현재 상태일 때만 된다. 철회 뒤 옛 링크는 404다. 학생 화면은 #29가 만든다. 링크를 가진 사람을 학생 본인으로 보므로 교수가 학생에게 직접 전달해야 한다.
+- **학생 재확인:** `POST …/confirmation`이 학생별 일회용 링크 `/consent/confirm#<token>`을 만든다(7일, 해시만 저장, 새 링크가 이전 미사용 링크를 지움). 토큰은 URL fragment와 요청 본문으로만 오가므로 서버 로그·Referer에 남지 않는다. `/v1/consent-confirmations/*`는 교수 세션 대신 토큰으로 인증하고 Origin 검사는 그대로 받는다. lookup·confirm·이미 확인된 링크 재사용은 모두 그 링크의 grant가 현재 상태이고, 수업의 승인된 동의서 버전과 같으며, 수업 종료 전일 때만 응답한다. 철회·재동의·버전 변경·종강 뒤 옛 링크는 404이며 학생·수업 정보를 돌려주지 않는다. 발급도 현재 grant가 있을 때 같은 INSERT 안에서 그 이력 ID를 묶는다. 학생 화면은 #29가 만든다. 링크를 가진 사람을 학생 본인으로 보므로 교수가 학생에게 직접 전달해야 한다.
 - **활성화:** 수업 설정(승인 버전·미래 종료일) → #7의 실시간 멤버십 `complete` → 모든 팀 멤버의 유효한 동의 순서로 확인한다. 실패는 `POLICY_NOT_APPROVED`, `CHANNEL_MEMBERSHIP_REQUIRED`, `CONSENT_REQUIRED`/409이고 `team.activate`/`denied` 감사 행이 남는다. 마지막 UPDATE가 같은 조건을 SQL 안에서 다시 검사하므로 확인과 쓰기 사이에 철회가 끼어도 활성화되지 않는다. 이미 활성이면 같은 `activatedAt`을 돌려준다.
 - **허용 구간:** 활성화마다 `collection_windows`에 열린 구간 하나가 생긴다(팀당 열린 구간 1개, 부분 UNIQUE 인덱스). 철회·거절, 버전 변경, 교수 중지(`POST …/deactivate`)는 같은 batch에서 팀을 `paused`로 바꾸고 구간을 닫는다. 닫힌 구간과 `consent_history`로 과거 허용 구간을 재구성한다. 재활성화는 모든 확인을 처음부터 다시 한다.
 - **공통 guard (`@teamplanet/collection`):** `collectionGate(db, {teamId, at, now, slackUserId?})`는 팀 활성·승인 버전·종료일·`at`이 허용 구간 안인지·사용자가 유효 동의를 가진 팀 멤버인지를 확인하고 막힌 이유를 돌려준다. #11 Events와 #12 History는 수신 때와 저장 직전에 이 함수를 다시 부른다. `pauseTeam(db, teamId, reason, at)`은 멈춤 SQL을 돌려주므로 원인 쓰기와 같은 batch로 실행한다. 신규 비동의 멤버·멤버 이탈·봇 제거 이벤트의 자동 멈춤은 #11이 이 함수로 연결한다.
