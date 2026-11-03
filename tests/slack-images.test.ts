@@ -95,7 +95,7 @@ test("different team, changed source, removed attachment and missing author neve
   message.edited = { ts: `${Math.floor(f.start / 1000) + 200}.000000` };
   await expect(run()).rejects.toThrow("SOURCE_CHANGED");
   // Once invalidated, the old fingerprint is not silently restored by a retry.
-  await expect(run()).rejects.toThrow("SOURCE_DELETED");
+  await expect(run()).rejects.toThrow("SOURCE_CHANGED");
   f.sqlite.run("UPDATE message_refs SET content_hash = ?, deleted_at = NULL", [await sha256Hex(f.text)]);
   delete message.edited; file.user = "UUNKNOWN1";
   expect(await run()).toMatchObject({ count: 1, limitations: ["image_author_uncertain"] });

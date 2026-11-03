@@ -1,0 +1,6 @@
+{
+  "name": "@teamplanet/analysis", "version": "0.0.0", "private": true, "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@teamplanet/contracts": "workspace:*", "@teamplanet/collection": "workspace:*", "@teamplanet/queue": "workspace:*", "@teamplanet/ai-core": "workspace:*" },
+  "devDependencies": { "@cloudflare/workers-types": "^5.20261024.1" }
+}

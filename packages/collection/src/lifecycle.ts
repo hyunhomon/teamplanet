@@ -89,7 +89,7 @@ export async function purgeTeam(db: D1Database, teamId: string, now: number) {
       OR target_id IN (SELECT id FROM evidence_events WHERE run_id IN (${runIds}))
       OR target_id IN (SELECT student_id FROM team_members WHERE team_id = ?)`)
       .bind(teamId, teamId, teamId, teamId));
-    for (const table of ["assessments", "evidence_events", "run_data_validity"]) writes.push(db.prepare(`DELETE FROM ${table} WHERE run_id IN (${runIds})`).bind(teamId));
+    for (const table of ["analysis_stage_results", "analysis_chunks", "analysis_sources", "analysis_specs", "assessments", "evidence_events", "run_data_validity"]) writes.push(db.prepare(`DELETE FROM ${table} WHERE run_id IN (${runIds})`).bind(teamId));
     writes.push(db.prepare("DELETE FROM analysis_runs WHERE team_id = ?").bind(teamId));
     for (const table of ["image_refs", "message_refs", "messages", "slack_event_refs", "collection_coverage", "data_invalidations"]) writes.push(db.prepare(`DELETE FROM ${table} WHERE team_id = ?`).bind(teamId));
     writes.push(db.prepare("DELETE FROM consent_evidence WHERE history_id IN (SELECT id FROM consent_history WHERE team_id = ?)").bind(teamId));
