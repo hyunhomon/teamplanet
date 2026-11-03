@@ -70,11 +70,13 @@ export async function planEvent(db: D1Database, ref: EventRefRow, now: number): 
     return { outcome: "paused:unknown_participant", writes: pauseTeam(db, teamId, "unknown_participant", now) };
   }
 
-  const gate = await collectionGate(db, { teamId, at: slackTsMs(ref.slack_ts!), now, slackUserId: ref.user_id! });
+  // Intake strips the ts of an unknown author's message, so such a ref can only stop the channel, never be stored.
+  const gate = await collectionGate(db, { teamId, at: ref.slack_ts ? slackTsMs(ref.slack_ts) : now, now, slackUserId: ref.user_id! });
   if (!gate.allowed) {
     if (gate.reason === "unknown_participant") return { outcome: "paused:unknown_participant", writes: pauseTeam(db, teamId, "unknown_participant", now) };
     return { outcome: `ignored:${gate.reason}`, writes: [] };
   }
+  if (!ref.slack_ts) return { outcome: "ignored:participant_only", writes: [] };
   return {
     outcome: "stored",
     writes: [mergeMessage(db, {
