@@ -1,0 +1,2 @@
+# Local development only. Copy to .dev.vars; never set this on production.
+AUTH_DEV_LOG_OTP=true
