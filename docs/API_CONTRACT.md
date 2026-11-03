@@ -78,7 +78,7 @@ WHERE s.id = :student_id AND c.professor_id = :session_professor_id;
 
 `code`는 앞자리 0을 보존하는 6자리 문자열이다. `Professor`는 `{id, email, createdAt}`이며 세션 토큰·OTP는 응답 본문에 넣지 않는다. 세션 쿠키는 `__Host-teamplanet_session`, `HttpOnly; Secure; SameSite=Lax; Path=/`, Domain 없음이다. 로컬 HTTP 쿠키 운용은 #2에서 명시적으로 분리하며 production 플래그를 약화하지 않는다. 브라우저는 같은 origin `/v1`과 `credentials: "same-origin"`을 쓴다. 변경 요청은 서버의 Origin/CSRF 검사를 통과해야 한다. 만료·회전·서버 세션 무효화·저장소는 #2 구현 범위다. 로그아웃은 반복 호출에도 200, 로그인하지 않은 `/auth/me`는 `UNAUTHENTICATED`/401이다. 인증 응답은 `Cache-Control: no-store`다.
 
-OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성공/실패 형태·타이밍 정책을 사용한다. 메일 제공자 실패를 발송 성공으로 꾸미지 않는다. 허용 기준·제공자·만료/시도/쿨다운 수치는 #2에서 설정으로 정하며 fixture 숫자를 운영 정책으로 확정하지 않는다. 오입력/재사용/경합 실패는 `OTP_INVALID`, 만료는 `OTP_EXPIRED`, 반복 시도는 `RATE_LIMITED`, 발송 장애는 `EMAIL_DELIVERY_UNAVAILABLE`다. UI는 `resendAvailableAt`까지 기다리고 서버의 429 및 `retryAfterSeconds`/`Retry-After`를 우선한다.
+OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성공/실패 형태·타이밍 정책을 사용한다. 메일 제공자 실패를 발송 성공으로 꾸미지 않는다. 허용 기준·제공자·만료/시도/쿨다운 수치는 #2에서 설정으로 정하며 fixture 숫자를 운영 정책으로 확정하지 않는다. 오입력/재사용/경합 실패는 `OTP_INVALID`, 만료는 `OTP_EXPIRED`, 반복 시도는 `RATE_LIMITED`, 서비스 설정 오류는 `EMAIL_DELIVERY_UNAVAILABLE`이며, 개별 전달 실패는 공개하지 않고 아래 운영 진단으로 확인한다. UI는 `resendAvailableAt`까지 기다리고 서버의 429 및 `retryAfterSeconds`/`Retry-After`를 우선한다.
 
 #2 구현 정책(`apps/api/src/auth.ts`의 `authPolicy`):
 
@@ -92,7 +92,7 @@ OTP 요청은 이메일 허용 여부를 열거할 수 없도록 동일한 성�
 | 열거 방지 | 미등록 이메일도 같은 202·challenge·발송 제한. 메일은 보내지 않음. OTP 요청 응답은 최소 1초 |
 | Origin | `/v1/*`의 GET/HEAD/OPTIONS 외 요청은 `Origin`이 요청 URL origin과 같아야 함. 아니면 `FORBIDDEN`/403 |
 
-등록 교수에게 메일 제공자가 실패하면 `EMAIL_DELIVERY_UNAVAILABLE`/503이고 challenge를 지운다. 이 응답은 등록 이메일에서만 나오므로 제공자 장애 중에는 등록 여부가 드러날 수 있다. 성공으로 꾸미지 않는다는 계약을 우선했다. 발송 제한은 이메일 기준이라 제3자가 특정 교수의 시간당 요청 한도를 소진시킬 수 있다.
+`202`는 요청 접수이며 메일 전달 성공 응답이 아니다. 등록 이메일의 발송은 Worker `waitUntil`에서 실행해 공급자 지연/실패가 공개 응답과 시간에 반영되지 않는다. 발송 실패는 고정 코드 `auth.email_delivery_failed`로 운영자에게 보고하고 challenge의 교수 연결을 제거해 검증 불가능하게 하되 제한 계산용 행은 보존한다. 미등록 이메일과 동일한 쿨다운·시간당/검증 시도 제한을 유지한다. UI는 발송 성공을 표시하지 않고 요청 접수·수신 확인을 안내한다. 메일 서비스 설정 누락은 이메일 조회 전에 모든 주소에 동일한 `EMAIL_DELIVERY_UNAVAILABLE`/503이다. 실제 전달은 운영자의 테스트 이메일 수신으로 확인하며 운영 로그에 이메일·OTP·토큰·공급자 본문을 남기지 않는다. 발송 제한은 이메일 기준이므로 제3자가 특정 주소의 시간당 한도를 소진시킬 수 있다.
 
 ## 수업·팀·학생 계약 — 구현은 #3/#7
 
