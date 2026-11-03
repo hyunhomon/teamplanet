@@ -3,14 +3,17 @@ import { secureHeaders } from "hono/secure-headers";
 import type { D1Database, Queue } from "@cloudflare/workers-types";
 import type { QueueEnvelope } from "@teamplanet/contracts";
 import { authRoutes, defaultAuthDeps, type AuthDeps } from "./auth";
+import { courseRoutes } from "./courses";
 import { apiError } from "./errors";
+import { requireSession, type ProtectedEnv } from "./guard";
+import { teamRoutes } from "./teams";
 import type { MailBindings } from "./mailer";
 
 export type Bindings = { DB: D1Database; WORK_QUEUE: Queue<QueueEnvelope> } & MailBindings;
 const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function createApp(authDeps: AuthDeps = defaultAuthDeps) {
-  const app = new Hono<{ Bindings: Bindings }>();
+  const app = new Hono<{ Bindings: Bindings; Variables: ProtectedEnv["Variables"] }>();
 
   app.use("*", secureHeaders());
   app.use("/v1/*", async (context, next) => {
@@ -34,7 +37,10 @@ export function createApp(authDeps: AuthDeps = defaultAuthDeps) {
       return context.json({ service: "teamplanet-api", status: "unavailable" }, 503);
     }
   });
+  app.use("/v1/*", requireSession(authDeps.now));
   app.route("/v1/auth", authRoutes(authDeps));
+  app.route("/v1", courseRoutes(authDeps.now));
+  app.route("/v1", teamRoutes(authDeps.now));
 
   app.notFound(context => apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다."));
   app.onError((_error, context) => apiError(context, "INTERNAL_SERVER_ERROR", "요청을 처리하지 못했습니다."));

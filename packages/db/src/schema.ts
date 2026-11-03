@@ -143,3 +143,20 @@ export const authSessions = sqliteTable("auth_sessions", {
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
   revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
 });
+
+/**
+ * Minimal audit trail (#3): who did what to which ID, when, and the outcome.
+ * Columns hold only typed IDs and enums; there is no place for message bodies, OTPs or tokens.
+ */
+export const auditEvents = sqliteTable("audit_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  actorProfessorId: text("actor_professor_id").notNull().references(() => professors.id),
+  action: text("action").notNull(), targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(), result: text("result").notNull(),
+  recordedAt: integer("recorded_at", { mode: "timestamp_ms" }).notNull(),
+}, table => [
+  check("audit_events_action", sql`${table.action} GLOB '[a-z]*.[a-z]*' AND length(${table.action}) <= 64`),
+  check("audit_events_target", sql`${table.targetType} GLOB '[a-z]*' AND length(${table.targetType}) <= 32 AND length(${table.targetId}) BETWEEN 1 AND 100`),
+  check("audit_events_result", sql`${table.result} IN ('succeeded', 'denied')`),
+  index("audit_events_target_lookup").on(table.targetType, table.targetId, table.recordedAt),
+]);

@@ -1,6 +1,6 @@
 # API Contract
 
-이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2에서 구현했다. Slack·동의 기능은 후속 이슈에서 구현하며 현재 미구현 경로는 404를 반환한다. `/health`는 기존 서비스 상태 응답을 유지한다.
+이슈 #1의 개발 계약이다. Base는 동일 origin의 `/v1`, JSON 요청·응답은 `application/json`이다. 성공 응답은 아래 표의 객체를 직접 반환하고 실패만 `{error: ...}`로 감싼다. 인증은 #2, 세션 가드·소유권·감사 로그와 `POST/GET /courses`, `GET /teams/:teamId`는 #3에서 구현했다. Slack·동의 기능은 후속 이슈에서 구현한다. 세션 없는 요청은 미구현 경로도 401이고, 로그인 상태의 미구현 경로는 404다. `/health`는 기존 서비스 상태 응답을 유지한다.
 
 ## 공유 코드와 사용법
 
@@ -66,6 +66,28 @@ WHERE s.id = :student_id AND c.professor_id = :session_professor_id;
 멤버/동의 변경은 팀과 학생이 같은 수업·workspace인지 및 실제 참가자인지도 확인한다. run/evidence/assessment는 팀을 통해 같은 소유권 조인을 적용한다. 기존 분석·동의 ID에는 신규 FK를 소급 적용하지 않는다. DB 제약이 세션 권한 검사나 동의 gate를 대신하지 않는다.
 
 미인증/만료 세션은 401, 자기 소유가 아닌 리소스와 없는 리소스는 같은 404다. 403은 Origin/CSRF 등 리소스 존재 여부와 관계없는 거부에 쓴다. 목록은 세션 교수 소유 데이터만 반환한다. Slack callback/events의 state/서명 인증은 #6/#11에서 구현한다.
+
+### 서버 가드 — #3 (`apps/api/src/guard.ts`)
+
+요청은 다음 순서로 거부된다. 앞 단계에서 막히면 뒤 단계와 핸들러, DB 쓰기는 실행되지 않는다.
+
+1. GET/HEAD/OPTIONS 외 요청의 `Origin`이 요청 URL origin과 다르면 403 `FORBIDDEN`.
+2. 기본 거부: `/v1/health`와 `/v1/auth/*`를 뺀 모든 `/v1` 경로는 유효한 세션이 없으면 401 `UNAUTHENTICATED`. 세션 교수는 `context.get("professor")`로만 얻는다.
+3. 경로 ID 형식이 틀리면 400 `VALIDATION_ERROR`.
+4. `owned(context, kind, id)`가 null이면 404 `NOT_FOUND`. `kind`는 `course | team | student | run | evidence`이며 모두 `courses.professor_id = 세션 교수`까지 조인한다. assessment는 run 소유권으로 확인한다.
+
+Slack OAuth callback과 Events는 교수 세션이 아니라 state/서명으로 인증하므로 #6/#11에서 1·2단계 예외 목록에 추가한다. 예외 경로도 학생 데이터 접근 전에 자체 검증을 통과해야 한다. `/v1/health`는 학생·교수 데이터를 반환하지 않는다.
+
+감사 로그는 `audit_events`(`actor_professor_id, action, target_type, target_id, result, recorded_at`)다. `audit(context, event, now)`는 INSERT 문을 반환하므로 감사 대상 쓰기와 `DB.batch`로 원자적으로 묶거나 단독 `.run()` 한다. 열은 ID와 열거값뿐이며 본문·요약·이름·OTP·토큰을 넣을 자리가 없다. `result`는 `succeeded | denied`이며 남의 리소스 조회 시도도 `denied`로 남는다. 동의 변경(#8)·데이터 열람(#22)·평가 확정(#23)은 `AuditAction`에 값을 추가해 같은 방식으로 기록한다. 보관 만료 정리는 #14 범위다.
+
+```ts
+routes.get("/teams/:teamId", async context => {
+  const team = await owned<TeamRow>(context, "team", teamId);       // 세션 교수 소유만
+  await audit(context, { action: "team.read", targetType: "team", targetId: teamId, result: team ? "succeeded" : "denied" }, now).run();
+  if (!team) return apiError(context, "NOT_FOUND", "리소스를 찾을 수 없습니다.");
+  ...
+});
+```
 
 ## 인증 계약 — #2와 #4의 시작점
 
