@@ -1,5 +1,5 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
-import { collectionGate, pauseTeam, stillCollectable } from "./index";
+import { collectionGate, collectionWriteGuard, pauseTeam } from "./index";
 
 export type EventKind = "message" | "message_changed" | "message_deleted" | "member_joined" | "member_left" | "revoked";
 export type EventRefRow = {
@@ -77,10 +77,9 @@ export async function planEvent(db: D1Database, ref: EventRefRow, now: number): 
     return { outcome: `ignored:${gate.reason}`, writes: [] };
   }
   if (!ref.slack_ts) return { outcome: "ignored:participant_only", writes: [] };
-  // The gate again inside the write batch: a withdrawal or pause after the check above rolls the merge back (and the job retries).
   return {
     outcome: "stored",
-    writes: [stillCollectable(db, teamId, [ref.user_id!], now), mergeMessage(db, {
+    writes: [collectionWriteGuard(db, { teamId, from: slackTsMs(ref.slack_ts), now, authors: [ref.user_id!] }), mergeMessage(db, {
       teamId, channelId: ref.channel_id!, slackTs: ref.slack_ts!, userId: ref.user_id, threadTs: ref.thread_ts,
       revision: ref.revision!, contentHash: ref.content_hash, source: "event",
     }, now)],

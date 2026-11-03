@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import type { D1Database, Queue } from "@cloudflare/workers-types";
 import type { QueueEnvelope } from "@teamplanet/contracts";
-import { collectionGate, SLACK_TS, slackTsMs, type EventKind } from "@teamplanet/collection";
+import { collectionGate, collectionWriteGuard, SLACK_TS, slackTsMs, type EventKind } from "@teamplanet/collection";
 import { dispatchJob, JobStore } from "@teamplanet/queue";
 import { encoder, sha256 } from "./auth";
 import { apiError } from "./errors";
@@ -113,9 +113,12 @@ export function eventRoutes(now: () => number) {
 
     const eventRef = `event_${crypto.randomUUID()}`;
     const contentHash = ref.text === undefined ? null : await sha256(ref.text);
-    const inserted = await db.prepare(`INSERT INTO slack_event_refs (event_ref, workspace_id, event_id, kind, team_id, channel_id, slack_ts, thread_ts,
+    const insert = db.prepare(`INSERT INTO slack_event_refs (event_ref, workspace_id, event_id, kind, team_id, channel_id, slack_ts, thread_ts,
         user_id, revision, content_hash, outcome, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?) ON CONFLICT (event_id) DO NOTHING`)
-      .bind(eventRef, installation.id, payload.event_id, ref.kind, teamId, ref.channelId, ref.slackTs, ref.threadTs, ref.userId, ref.revision, contentHash, at).run();
+      .bind(eventRef, installation.id, payload.event_id, ref.kind, teamId, ref.channelId, ref.slackTs, ref.threadTs, ref.userId, ref.revision, contentHash, at);
+    const inserted = teamId && ref.slackTs && (ref.kind === "message" || ref.kind === "message_changed")
+      ? (await db.batch([collectionWriteGuard(db, { teamId, from: slackTsMs(ref.slackTs), now: at, authors: [ref.userId!] }), insert]))[1]!
+      : await insert.run();
     if (!inserted.meta.changes) return context.body(null, 200);
     const store = new JobStore(db, now);
     let row;
