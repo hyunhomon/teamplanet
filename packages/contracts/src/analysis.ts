@@ -134,3 +134,4 @@ export type ChunkPlan = z.infer<typeof chunkPlanSchema>;
 export type Part = z.infer<typeof partSchema>;
 export type EvidenceInput = z.infer<typeof evidenceInputSchema>;
 export type NormalizedEvidence = z.infer<typeof normalizedEvidenceSchema>;
+export const evidenceOutputJsonSchema = z.toJSONSchema(evidenceModelOutputSchema);

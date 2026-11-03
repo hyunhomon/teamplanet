@@ -5,7 +5,7 @@ import type { ProtectedEnv } from "../apps/api/src/guard";
 import { collectionFixture } from "./helpers/collection";
 import * as fixtures from "@teamplanet/contracts/fixtures";
 import { analysisRunResponseSchema, jobKey, type QueueEnvelope } from "@teamplanet/contracts";
-import { prepareRun, withChunkInput } from "@teamplanet/analysis";
+import { extractRunEvidence, prepareRun, withChunkInput } from "@teamplanet/analysis";
 import { JobStore, LeaseLost, consumeMessage, type JobContext } from "@teamplanet/queue";
 import { createHandlers } from "../apps/consumer/src/index";
 import { purgeTeam, requestErasure, withMessageImages } from "@teamplanet/collection";
@@ -93,4 +93,19 @@ test("remote edits invalidate old source without inventing a deletion; a fresh r
   const newer = await create(); await prepareRun(deps(), newer.id, await context(newer.id));
   expect(analysisRunResponseSchema.parse(await (await call(`/analysis-runs/${newer.id}`)).json()).valid).toBe(true);
   expect(analysisRunResponseSchema.parse(await (await call(`/analysis-runs/${old.id}`)).json()).valid).toBe(false);
+});
+test("A production wrapper uses the real run fence: withdrawal during mocked inference never returns evidence", async () => {
+  const run = await create(); await prepareRun(deps(), run.id, await context(run.id));
+  let paidRequests = 0;
+  const model = { apiKey: "synthetic", modelId: "qwen/qwen3.5-9b", fetcher: async (url: string, init: RequestInit) => {
+    if (url.includes("/generation?")) return Response.json({ data: { id: "gen-synthetic", model: "qwen/qwen3.5-9b", provider_name: "DeepInfra" } });
+    paidRequests++;
+    const input = JSON.parse(JSON.parse(init.body as string).messages[1].content[0].text);
+    f.sqlite.run("UPDATE consents SET status = 'withdrawn', recorded_at = ?", [clock]);
+    return Response.json({ id: "gen-synthetic", model: "qwen/qwen3.5-9b", choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ version: input.version, processedPartIds: input.primaryPartIds, events: [], limitations: [] }) } }] });
+  } };
+  await expect(extractRunEvidence(deps(), model, run.id, "chunk_0")).rejects.toThrow("DATA_INVALIDATED");
+  expect(paidRequests).toBe(1);
+  await expect(extractRunEvidence(deps(), model, run.id, "chunk_0")).rejects.toThrow();
+  expect(paidRequests).toBe(1); // All requests above are injected mocks, never network inference.
 });
