@@ -1,6 +1,7 @@
 import { deepStrictEqual, strictEqual } from "node:assert";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { convertV4MiniflareOptions, Miniflare, type V4MiniflareOptions } from "miniflare";
 import { jobKey, type QueueEnvelope, type QueueJob } from "../packages/contracts/src/jobs";
@@ -8,12 +9,22 @@ import { jobKey, type QueueEnvelope, type QueueJob } from "../packages/contracts
 const root = resolve(import.meta.dir, "..");
 const cache = join(root, "node_modules/.cache");
 mkdirSync(cache, { recursive: true });
-const runDir = mkdtempSync(join(cache, "queue-local-"));
+const runDir = process.env.TEAMPLANET_QUEUE_RUN_DIR ?? mkdtempSync(join(cache, "queue-local-"));
 const consumerConfig = JSON.parse(readFileSync(join(root, "apps/consumer/wrangler.jsonc"), "utf8"));
 const source = consumerConfig.queues.consumers[0];
 const entrypoints = [join(root, "tests/fixtures/queue-producer.ts"), join(root, "tests/fixtures/queue-consumer.ts")];
-const compiled = await Bun.build({ entrypoints, outdir: runDir, root, target: "browser", format: "esm" });
-if (!compiled.success) throw new Error(`Local queue bundle failed: ${compiled.logs.join("\n")}`);
+if (!process.env.TEAMPLANET_QUEUE_NODE_RUNNER) {
+  const compiled = await Bun.build({ entrypoints, outdir: runDir, root, target: "browser", format: "esm" });
+  if (!compiled.success) throw new Error(`Local queue bundle failed: ${compiled.logs.join("\n")}`);
+  // Bun 1.3.14 on Windows can panic after Miniflare.dispose(), even after all assertions pass.
+  // Keep Bun for the pinned build; run the actual simulator lifecycle under required Node 24.
+  const runner = await Bun.build({ entrypoints: [import.meta.path], target: "node", format: "esm", packages: "external",
+    outdir: join(runDir, "runner"), define: { "import.meta.dir": JSON.stringify(import.meta.dir) } });
+  if (!runner.success) throw new Error(`Local queue runner build failed: ${runner.logs.join("\n")}`);
+  const child = Bun.spawn(["node", runner.outputs[0]!.path], { stdin: "ignore", stdout: "inherit", stderr: "inherit",
+    env: { ...process.env, TEAMPLANET_QUEUE_NODE_RUNNER: "1", TEAMPLANET_QUEUE_RUN_DIR: runDir } });
+  process.exit(await child.exited);
+}
 const d1Databases = { DB: "queue-local-isolated" };
 // Miniflare validates these options at startup. Avoid expanding its generated Zod
 // option union at every nested Worker in the repository's TypeScript check.
@@ -55,7 +66,7 @@ try {
     const deadline = Date.now() + 90_000;
     while (!await predicate()) {
       if (Date.now() > deadline) throw new Error(`Local queue timeout: ${label}`);
-      await Bun.sleep(100);
+      await sleep(100);
     }
     console.log(`PASS: ${label}`);
   };
