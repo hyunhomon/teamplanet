@@ -93,6 +93,7 @@ export function eventRoutes(now: () => number) {
     if ("ignore" in event) return ignore(event.ignore);
 
     let teamId: string | null = null;
+    let ref = event;
     if (event.channelId) {
       const team = await db.prepare("SELECT id FROM teams WHERE workspace_id = ? AND channel_id = ?").bind(installation.id, event.channelId).first<{ id: string }>();
       if (!team) return ignore("channel");
@@ -101,6 +102,8 @@ export function eventRoutes(now: () => number) {
       if (event.kind === "message" || event.kind === "message_changed") {
         const gate = await collectionGate(db, { teamId, at: slackTsMs(event.slackTs!), now: at, slackUserId: event.userId! });
         if (!gate.allowed && gate.reason !== "unknown_participant") return ignore(gate.reason);
+        // Stopping the channel needs only who and where: no ts, thread, revision or fingerprint of the stranger's message.
+        if (!gate.allowed) ref = { ...event, slackTs: null, threadTs: null, revision: null, text: undefined };
       }
       if (event.kind === "member_joined" || event.kind === "member_left") {
         const gate = await collectionGate(db, { teamId, at, now: at });
@@ -109,10 +112,10 @@ export function eventRoutes(now: () => number) {
     }
 
     const eventRef = `event_${crypto.randomUUID()}`;
-    const contentHash = event.text === undefined ? null : await sha256(event.text);
+    const contentHash = ref.text === undefined ? null : await sha256(ref.text);
     const inserted = await db.prepare(`INSERT INTO slack_event_refs (event_ref, workspace_id, event_id, kind, team_id, channel_id, slack_ts, thread_ts,
         user_id, revision, content_hash, outcome, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?) ON CONFLICT (event_id) DO NOTHING`)
-      .bind(eventRef, installation.id, payload.event_id, event.kind, teamId, event.channelId, event.slackTs, event.threadTs, event.userId, event.revision, contentHash, at).run();
+      .bind(eventRef, installation.id, payload.event_id, ref.kind, teamId, ref.channelId, ref.slackTs, ref.threadTs, ref.userId, ref.revision, contentHash, at).run();
     if (!inserted.meta.changes) return context.body(null, 200);
     const store = new JobStore(db, now);
     let row;

@@ -201,3 +201,20 @@ test("unknown members, leavers, bot removal and uninstall stop collection", asyn
   expect([teamStatus(), lastReason()]).toEqual(["paused", "slack_revoked"]);
   expect(database.sqlite.query("SELECT token_ciphertext FROM slack_installations").get()).toEqual({ token_ciphertext: null });
 });
+
+test("an unknown author's message stops the channel without keeping its fingerprint or message metadata", async () => {
+  const stranger = "USYNTHNEW3";
+  const ts = tsAt(START + 2000);
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(TEXT))), b => b.toString(16).padStart(2, "0")).join("");
+  await post(callback(message(ts, { user: stranger, thread_ts: tsAt(START + 1000) })));
+  expect(database.sqlite.query("SELECT kind, channel_id, user_id, slack_ts, thread_ts, revision, content_hash FROM slack_event_refs").all()).toEqual([
+    { kind: "message", channel_id: CHANNEL, user_id: stranger, slack_ts: null, thread_ts: null, revision: null, content_hash: null },
+  ]);
+  await drain();
+  expect(teamStatus()).toBe("paused");
+  expect(database.sqlite.query("SELECT end_reason FROM collection_windows WHERE ended_at IS NOT NULL").all()).toEqual([{ end_reason: "unknown_participant" }]);
+  expect(outcomes()).toEqual([{ kind: "message", outcome: "paused:unknown_participant", channel_id: CHANNEL }]);
+  expect(refs()).toEqual([]);
+  expect(dump()).not.toContain(hash);
+  expect(dump()).not.toContain(ts);
+});
