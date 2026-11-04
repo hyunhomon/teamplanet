@@ -156,3 +156,27 @@ test("only real 402 means billing; auth/rate/outage/context and provider provena
     await expect(reviewAssessment(adapter(f.reviewOutputFixture, options).deps, await input(), current)).rejects.toThrow(code);
   }
 });
+
+test("a correction cannot erase original B uncertainty from the final review or candidate", async () => {
+  const value = await input();
+  value.assessment.assessments[0]!.requiresHumanReview = true;
+  value.assessment.assessments[0]!.limitations = ["original_assessment_uncertainty"];
+  const fixed = correctionOutputSchema.parse(structuredClone(f.correctionOutputFixture));
+  fixed.assessment.assessments[0]!.requiresHumanReview = false;
+  fixed.assessment.assessments[0]!.limitations = [];
+  const history = await reconcileReview(value, f.correctionRequestFixture, fixed, { ...f.reviewOutputFixture, iteration: 1 });
+  expect(history.finalReview!.requiresHumanReview).toBe(true);
+  expect(history.candidate!.assessments[0]!.requiresHumanReview).toBe(true);
+  expect(history.candidate!.assessments[0]!.limitations).toContain("original_assessment_uncertainty");
+});
+
+test("C rejects a complete short source copied into an instruction or limitation", async () => {
+  const value = await input(), p = value.parts[0]!;
+  p.text = "합성 원문을 그대로 기록합니다."; p.end = p.text.length; p.utf8Bytes = new TextEncoder().encode(p.text).length;
+  value.evidence[0]!.citations[0] = { messageId: p.messageId, start: 0, end: p.end, hash: await sha256Hex(p.text) };
+  for (const out of [{ ...f.correctionRequestFixture, issues: [{ ...f.correctionRequestFixture.issues[0]!, instruction: p.text }] },
+    { ...f.reviewOutputFixture, limitations: [p.text] }]) {
+    const mock = adapter(out);
+    await expect(reviewAssessment(mock.deps, value, current)).rejects.toThrow("MODEL_INVALID");
+  }
+});

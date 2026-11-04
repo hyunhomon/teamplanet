@@ -68,7 +68,10 @@ function checkedReview(raw: unknown, input: ReviewInput): ReviewOutput {
   // A review may describe an error, but may not persist a raw quotation as its correction.
   for (const text of [...out.limitations, ...out.issues.map(i => i.instruction)]) {
     if (text.length > 2000) invalid();
-    for (const p of input.parts) for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) invalid();
+    for (const p of input.parts) {
+      if (p.text.length >= 12 && text.includes(p.text)) invalid();
+      for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) invalid();
+    }
   }
   out.limitations = distinct([...out.limitations, ...input.limitations, ...input.evidence.flatMap(e => e.limitations),
     ...input.assessment.overviews.flatMap(o => o.limitations), ...input.assessment.assessments.flatMap(a => a.limitations)]);
@@ -139,6 +142,10 @@ export async function reconcileReview(value: unknown, first: unknown, correction
   catch { return invalid(); }
   if (second === undefined) invalid();
   const finalReview = checkedReview(second, { ...correctedInput, iteration: 1, assessment: fixed.assessment });
+  // The correction may change the judgement, but must not erase the original B uncertainty.
+  const originalRows = [...input.assessment.overviews, ...input.assessment.assessments];
+  finalReview.limitations = distinct([...finalReview.limitations, ...originalRows.flatMap(row => row.limitations)]);
+  finalReview.requiresHumanReview ||= originalRows.some(row => row.requiresHumanReview);
   const candidate = candidateFor({ ...correctedInput, iteration: 1, assessment: fixed.assessment }, finalReview);
   return { originalAssessment, firstReview, correction: structuredClone(fixed), finalReview, candidate,
     next: "awaiting_professor" as const, requiresHumanReview: finalReview.requiresHumanReview };

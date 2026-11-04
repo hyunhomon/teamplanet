@@ -17,7 +17,7 @@ C의 모든 issue는 알려진 학생·선택 역량과 실제 근거 또는 메
 - 최초 수정 요구만 `needs_correction`이며 후보는 null이다.
 - B 수정은 `correctionOutputSchema`/`validateCorrectionOutput`으로 issue ID 전체·정확한 학생/선택 범위·근거를 검사한다.
 - C iteration1 재검토는 한 번뿐이다. 두 번째 수정 요구는 거부하며 미해결은 `human_review`로 종료한다.
-- 수용/사람 검토의 다음 상태는 항상 `awaiting_professor`다. 입력 A/B의 한계·사람 검토 플래그를 C가 낮출 수 없고 후보에도 보존한다. 이전 issue와 수정 전후 결과를 지우지 않는다.
+- 수용/사람 검토의 다음 상태는 항상 `awaiting_professor`다. 입력 A/B의 한계·사람 검토 플래그를 C가 낮출 수 없고 후보에도 보존한다. B 수정본이 원래 B의 한계·검토 플래그를 제거해도 최종 검토와 후보에 원래 정보를 합친다. 이전 issue와 수정 전후 결과를 지우지 않는다.
 
 ## 공급자와 통합 경계
 
