@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type SubmitEvent } from "react";
 import { AuthController } from "../lib/auth";
 import SetupWizard from "./SetupWizard";
+import AnalysisDashboard from "./AnalysisDashboard";
 import { setupLocation } from "../lib/setup";
 
 const secondsUntil = (at: number, now: number) => Math.max(0, Math.ceil((at - now) / 1000));
@@ -74,7 +75,13 @@ export default function ProfessorWorkspace() {
         <button className="button secondary" onClick={() => void logout()}>로그아웃</button>
       </div>
       <p className="signed-in-as"><span>로그인 계정</span> {state.session.professor.email}</p>
-      <SetupWizard onSignedOut={() => controller.resetSession("세션이 만료되었습니다. 다시 로그인해 주세요.")} />
+      <nav className="workspace-nav" aria-label="워크스페이스 메뉴">
+        <a href="/workspace?view=analysis" aria-current={setupLocation(window.location.search).view === "analysis" ? "page" : undefined}>팀 분석</a>
+        <a href="/workspace" aria-current={setupLocation(window.location.search).view === "setup" ? "page" : undefined}>수업·Slack 설정</a>
+      </nav>
+      {setupLocation(window.location.search).view === "analysis"
+        ? <AnalysisDashboard professorId={state.session.professor.id} onSignedOut={() => controller.resetSession("세션이 만료되었습니다. 다시 로그인해 주세요.")} />
+        : <SetupWizard onSignedOut={() => controller.resetSession("세션이 만료되었습니다. 다시 로그인해 주세요.")} />}
     </section>
   );
 

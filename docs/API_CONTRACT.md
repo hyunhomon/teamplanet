@@ -308,3 +308,5 @@ Events 원문 참조 접수와 Consumer source 쓰기는 collectionWriteGuard를
 학생 문의 #30은 [INQUIRIES.md](INQUIRIES.md)와 `packages/contracts/src/inquiries.ts`를 따른다. 수집 동의와 분리된 본인 문의 권한, 접수 당시 n일, 일회성 ticket, 만료 조회 차단과 자동 삭제를 사용한다.
 
 분석 실행 #16의 POST/GET·취소·재개, UTC 기간/시간대·idempotencyKey와 A/B/C JSON/오류/버전은 [ANALYSIS_CONTRACT.md](ANALYSIS_CONTRACT.md)를 따른다. `@teamplanet/contracts/analysis-fixtures`로 #18/#19를 독립 구현한다.
+
+교수 팀 분석 화면 #21은 보호된 `GET /v1/analysis-dashboard`, `POST /v1/analysis-preview` (`{teamId,from,to,timezone}`), `GET /v1/teams/:teamId/analysis-runs?before=<version>`를 제공한다. `packages/contracts/src/dashboard.ts`의 strict schema를 사용하며 프리뷰와 생성은 같은 서버 eligibility를 검증한다. 프리뷰는 차단 사유/선택 역량/기간/coverage metadata만 반환하고 수집·모델 호출·run 생성은 하지 않는다. 이력은 버전 내림차순 20개와 `nextBefore`로 페이지를 이어간다. 세션401·Origin403·타인/없는 팀404를 유지한다. 전체 complete coverage가 있지만 참조가 없는 기간의 새 생성은409이며, 아직 확인되지 않은 coverage를 데이터 없음으로 표현하지 않는다. 자세한 복원/멱등 요청·범위/한계는 [ANALYSIS_DASHBOARD.md](ANALYSIS_DASHBOARD.md)를 따른다.

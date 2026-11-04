@@ -109,6 +109,35 @@ test("A production wrapper uses the real run fence: withdrawal during mocked inf
   await expect(extractRunEvidence(deps(), model, run.id, "chunk_0")).rejects.toThrow();
   expect(paidRequests).toBe(1); // All requests above are injected mocks, never network inference.
 });
+
+for (const timing of ["source", "inference"] as const) test(`cancellation during ${timing} fences A before transmission or result return`, async () => {
+  const run = await create(); await prepareRun(deps(), run.id, await context(run.id));
+  let cancelled = false, paidRequests = 0;
+  const originalSend = send;
+  if (timing === "source") send = async (url, init) => {
+    if (!cancelled) { cancelled = true; expect((await call(`/analysis-runs/${run.id}/cancel`, {})).status).toBe(200); }
+    return originalSend(url, init);
+  };
+  const model = { apiKey: "synthetic", modelId: "qwen/qwen3.5-9b", fetcher: async (url: string, init: RequestInit) => {
+    if (url.includes("/generation?")) return Response.json({ data: { id: "gen-synthetic", model: "qwen/qwen3.5-9b", provider_name: "DeepInfra" } });
+    paidRequests++;
+    const input = JSON.parse(JSON.parse(init.body as string).messages[1].content[0].text);
+    if (timing === "inference") expect((await call(`/analysis-runs/${run.id}/cancel`, {})).status).toBe(200);
+    return Response.json({ id: "gen-synthetic", model: "qwen/qwen3.5-9b", choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ version: input.version, processedPartIds: input.primaryPartIds, events: [], limitations: [] }) } }] });
+  } };
+  await expect(extractRunEvidence(deps(), model, run.id, "chunk_0")).rejects.toThrow();
+  expect(paidRequests).toBe(timing === "source" ? 0 : 1);
+});
+
+test("cancellation during the last source check cannot pass the transmission fence", async () => {
+  const run = await create(); await prepareRun(deps(), run.id, await context(run.id));
+  await withChunkInput({ ...deps(), send: (url, init) => send(url, init) }, run.id, "chunk_0", async (_input, check) => {
+    const originalSend = send;
+    send = async (url, init) => { await call(`/analysis-runs/${run.id}/cancel`, {}); return originalSend(url, init); };
+    await expect(check()).rejects.toThrow();
+  });
+});
+
 test("B production wrapper restores only cited sources under the real run fence: withdrawal during mocked inference returns nothing", async () => {
   const run = await create(); await prepareRun(deps(), run.id, await context(run.id));
   const metadata = () => Response.json({ data: { id: "gen-synthetic", model: "qwen/qwen3.5-9b", provider_name: "DeepInfra" } });

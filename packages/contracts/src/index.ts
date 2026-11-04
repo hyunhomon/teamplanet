@@ -49,4 +49,5 @@ export * from "./jobs";
 export * from "./lifecycle";
 export * from "./inquiries";
 export * from "./analysis";
+export * from "./dashboard";
 export * from "./reviewer";

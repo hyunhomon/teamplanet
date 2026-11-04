@@ -41,7 +41,7 @@ export function dataEpochGuard(db: D1Database, teamId: string, epoch: number) {
 export function runValidityGuard(db: D1Database, runId: string, now: number) {
   return db.prepare(`SELECT json(CASE WHEN EXISTS (SELECT 1 FROM analysis_runs r JOIN run_data_validity rv ON rv.run_id = r.id AND rv.team_id = r.team_id
     JOIN team_data_versions v ON v.team_id = r.team_id JOIN teams t ON t.id = r.team_id JOIN courses c ON c.id = t.course_id
-    WHERE r.id = ? AND rv.invalidated_at IS NULL AND rv.data_epoch = v.epoch AND v.blocked_at IS NULL AND v.purged_at IS NULL
+    WHERE r.id = ? AND r.status NOT IN ('cancelled','failed_data') AND rv.invalidated_at IS NULL AND rv.data_epoch = v.epoch AND v.blocked_at IS NULL AND v.purged_at IS NULL
       AND EXISTS (SELECT 1 FROM consent_policies WHERE version = c.consent_version)
       AND ${participantsMappedSql("t.id")} AND EXISTS (SELECT 1 FROM team_members WHERE team_id = t.id)
       AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = t.id AND NOT ${validConsentSql("m.team_id", "m.student_id")})

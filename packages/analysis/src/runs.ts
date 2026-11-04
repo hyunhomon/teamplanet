@@ -151,7 +151,11 @@ export async function withChunkInput<T>(deps: ImageDeps, runId: string, chunkId:
 export async function withSourceParts<T>(deps: ImageDeps, spec: Spec, wanted: readonly Part[], use: (parts: EvidenceInput["parts"], assertCurrent: () => Promise<void>) => Promise<T>): Promise<T> {
   const db = deps.db, runId = spec.run_id, ids = [...new Set(wanted.map(p => p.messageId))];
   const parts: EvidenceInput["parts"] = [], checks: (() => Promise<void>)[] = [];
-  const assertCurrent = async () => { await runValidityGuard(db, runId, deps.now()).run(); for (const check of checks) await check(); };
+  const assertCurrent = async () => {
+    await runValidityGuard(db, runId, deps.now()).run();
+    for (const check of checks) await check();
+    await runValidityGuard(db, runId, deps.now()).run();
+  };
   async function load(index: number): Promise<T> {
     await runValidityGuard(db, runId, deps.now()).run();
     if (index === ids.length) return use(parts, assertCurrent);

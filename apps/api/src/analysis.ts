@@ -1,11 +1,12 @@
 import { Hono, type Context } from "hono";
 import type { Queue } from "@cloudflare/workers-types";
-import { analysisRunResponseSchema, createAnalysisRunSchema, jobKey, rubricSelectionSchema, runIdSchema, type QueueEnvelope } from "@teamplanet/contracts";
+import { analysisRunResponseSchema, analysisDashboardSchema, analysisPreviewRequestSchema, analysisRunListSchema, createAnalysisRunSchema, jobKey, rubricSelectionSchema, runIdSchema, teamIdSchema, type QueueEnvelope } from "@teamplanet/contracts";
 import { loadSpec, outboxInsert, snapshot, type Spec } from "@teamplanet/analysis";
-import { processingWriteGuard, runValidityGuard, sha256Hex } from "@teamplanet/collection";
+import { processingWriteGuard, runValidityGuard, sha256Hex, validConsentSql } from "@teamplanet/collection";
 import { dispatchJob, JobStore } from "@teamplanet/queue";
 import { apiError, parseBody } from "./errors";
 import { owned, type ProtectedEnv } from "./guard";
+import { analysisEligibility, eligibilityError } from "./analysis-eligibility";
 type Env = { Bindings: ProtectedEnv["Bindings"] & { WORK_QUEUE?: Queue<QueueEnvelope> }; Variables: ProtectedEnv["Variables"] };
 export function analysisRoutes(now: () => number) {
   const routes = new Hono<Env>();
@@ -24,25 +25,54 @@ export function analysisRoutes(now: () => number) {
       status: invalid ? "failed_data" : spec.status, snapshot: JSON.parse(spec.snapshot_json), manifest: valid ? JSON.parse(spec.manifest_json!) : null,
       valid, progress, errors, version: spec.version });
   }
+  routes.get("/analysis-dashboard", async c => {
+    const rows = await c.env.DB.prepare(`SELECT t.*, c.name AS course_name, c.starts_at, c.ends_at, r.rubric_version, r.selected_competencies_json,
+      (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id) AS members,
+      (SELECT COUNT(*) FROM team_members m WHERE m.team_id = t.id AND ${validConsentSql("m.team_id", "m.student_id")}) AS confirmed,
+      (SELECT COUNT(*) FROM consents p WHERE p.team_id = t.id AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = p.team_id AND m.student_id = p.student_id)) AS unmapped
+      FROM teams t JOIN courses c ON c.id = t.course_id LEFT JOIN course_rubric_settings r ON r.course_id = c.id
+      WHERE c.professor_id = ? ORDER BY c.name, t.name, t.id`).bind(c.get("professor").id).all<any>();
+    return c.json(analysisDashboardSchema.parse({ teams: rows.results.map(row => {
+      let selected: unknown; try { selected = JSON.parse(row.selected_competencies_json ?? "null"); } catch { selected = null; }
+      const selection = rubricSelectionSchema.safeParse({ rubricVersion: row.rubric_version, selectedCompetencies: selected });
+      return { team: { id: row.id, courseId: row.course_id, workspaceId: row.workspace_id, channelId: row.channel_id, name: row.name, collectionStatus: row.collection_status },
+        courseName: row.course_name, startsAt: row.starts_at === null ? null : new Date(row.starts_at).toISOString(), endsAt: row.ends_at === null ? null : new Date(row.ends_at).toISOString(),
+        selection: selection.success ? selection.data : null, members: row.members, confirmed: row.confirmed, unmapped: row.unmapped };
+    }) }));
+  });
+  routes.post("/analysis-preview", async c => {
+    const parsed = await parseBody(c, analysisPreviewRequestSchema); if (parsed.error) return parsed.error;
+    const result = await analysisEligibility(c, parsed.data, now());
+    return result ? c.json(result.preview) : missing(c);
+  });
+  routes.get("/teams/:teamId/analysis-runs", async c => {
+    const id = teamIdSchema.safeParse(c.req.param("teamId")); if (!id.success) return apiError(c, "VALIDATION_ERROR", "요청 형식을 확인하세요.");
+    if (!await owned(c, "team", id.data)) return missing(c);
+    const before = c.req.query("before");
+    if (before !== undefined && (!/^[1-9][0-9]{0,9}$/.test(before) || !Number.isSafeInteger(Number(before)))) return apiError(c, "VALIDATION_ERROR", "페이지 형식을 확인하세요.");
+    const rows = await c.env.DB.prepare(`SELECT s.*, r.from_ts, r.to_ts, r.status FROM analysis_specs s JOIN analysis_runs r ON r.id = s.run_id
+      WHERE s.team_id = ? AND s.professor_id = ? AND (? IS NULL OR s.version < ?) ORDER BY s.version DESC LIMIT 21`)
+      .bind(id.data, c.get("professor").id, before ? Number(before) : null, before ? Number(before) : null).all<Spec>();
+    const page = rows.results.slice(0, 20), runs = await Promise.all(page.map(spec => response(c, spec)));
+    return c.json(analysisRunListSchema.parse({ teamId: id.data, runs, nextBefore: rows.results.length > 20 ? page.at(-1)!.version : null }));
+  });
   routes.post("/analysis-runs", async c => {
     const input = await parseBody(c, createAnalysisRunSchema); if (input.error) return input.error;
     const { teamId, from, to, timezone, idempotencyKey } = input.data, db = c.env.DB, professor = c.get("professor").id;
     const hash = await sha256Hex(JSON.stringify({ teamId, from, to, timezone }));
     const existing = await db.prepare("SELECT run_id, request_hash FROM analysis_specs WHERE professor_id = ? AND idempotency_key = ?").bind(professor, idempotencyKey).first<any>();
     if (existing) return existing.request_hash !== hash ? apiError(c, "CONFLICT", "같은 요청 키의 입력이 다릅니다.") : c.json(await response(c, (await loadSpec(db, existing.run_id))!), 202);
-    const team = await owned<{ course_id: string }>(c, "team", teamId); if (!team) return missing(c);
-    const config = await db.prepare(`SELECT c.*, r.rubric_version, r.selected_competencies_json, r.updated_at AS rubric_updated FROM courses c
-      LEFT JOIN course_rubric_settings r ON r.course_id = c.id WHERE c.id = ?`).bind(team.course_id).first<any>();
-    const selection = rubricSelectionSchema.safeParse({ rubricVersion: config.rubric_version, selectedCompetencies: JSON.parse(config.selected_competencies_json ?? "null") });
     const a = Date.parse(from), b = Date.parse(to), at = now();
-    if (!selection.success || config.starts_at === null || config.ends_at === null || a < config.starts_at || b > config.ends_at || b > at) return apiError(c, "CONFLICT", "수업 기간·선택 역량·분석 기간 설정을 확인하세요.");
-    try { await processingWriteGuard(db, { teamId, from: a, to: b, now: at }).run(); } catch { return apiError(c, "CONSENT_REQUIRED", "동의·수집 구간·보관 상태를 확인하세요."); }
-    const coverage = await db.prepare("SELECT 1 FROM collection_coverage WHERE team_id = ? AND from_ms <= ? AND to_ms >= ? AND status = 'complete'").bind(teamId, a, b).first();
-    if (!coverage) return apiError(c, "CONFLICT", "전체 기간의 수집 coverage를 먼저 완료하세요.");
+    const eligibility = await analysisEligibility(c, { teamId, from, to, timezone }, at); if (!eligibility) return missing(c);
+    if (!eligibility.preview.allowed || !eligibility.selection) return eligibilityError(c, eligibility.preview.reasons);
+    const { config, selection } = eligibility;
     const students = await db.prepare("SELECT s.id, s.display_name AS displayName FROM students s JOIN team_members m ON m.student_id = s.id WHERE m.team_id = ? ORDER BY s.id").bind(teamId).all<any>();
     const runId = `run_${crypto.randomUUID()}`, job = { kind: "analysis.prepare" as const, runId };
     try { await db.batch([
       processingWriteGuard(db, { teamId, from: a, to: b, now: now() }),
+      db.prepare(`SELECT json(CASE WHEN EXISTS (SELECT 1 FROM collection_coverage WHERE team_id = ? AND from_ms <= ? AND to_ms >= ? AND status = 'complete')
+        AND EXISTS (SELECT 1 FROM message_refs WHERE team_id = ? AND deleted_at IS NULL AND CAST(slack_ts AS REAL) * 1000 >= ? AND CAST(slack_ts AS REAL) * 1000 < ?)
+        THEN '1' ELSE 'coverage_changed' END)`).bind(teamId, a, b, teamId, a, b),
       db.prepare(`SELECT json(CASE WHEN EXISTS (SELECT 1 FROM teams t JOIN courses c ON c.id = t.course_id JOIN course_rubric_settings r ON r.course_id = c.id
         WHERE t.id = ? AND c.professor_id = ? AND c.starts_at <= ? AND c.ends_at >= ? AND r.rubric_version = ? AND r.selected_competencies_json = ? AND r.updated_at = ?)
         AND ? = (SELECT json_group_array(json_object('id', id, 'displayName', display_name)) FROM
@@ -52,7 +82,7 @@ export function analysisRoutes(now: () => number) {
         WHERE NOT EXISTS (SELECT 1 FROM analysis_specs WHERE professor_id = ? AND idempotency_key = ?)`).bind(runId, teamId, from, to, professor, professor, idempotencyKey),
       db.prepare(`INSERT INTO analysis_specs (run_id, team_id, professor_id, idempotency_key, request_hash, version, timezone, created_at, snapshot_json, students_json)
         SELECT ?, ?, ?, ?, ?, COALESCE((SELECT MAX(version) FROM analysis_specs WHERE team_id = ?),0)+1, ?, ?, ?, ?
-        WHERE EXISTS (SELECT 1 FROM analysis_runs WHERE id = ?)`).bind(runId, teamId, professor, idempotencyKey, hash, teamId, timezone, at, JSON.stringify(snapshot(selection.data)), JSON.stringify(students.results), runId),
+        WHERE EXISTS (SELECT 1 FROM analysis_runs WHERE id = ?)`).bind(runId, teamId, professor, idempotencyKey, hash, teamId, timezone, at, JSON.stringify(snapshot(selection)), JSON.stringify(students.results), runId),
       db.prepare(`INSERT INTO queue_jobs (job_key, job_json, created_at, updated_at) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM analysis_runs WHERE id = ?)`)
         .bind(jobKey(job), JSON.stringify(job), at, at, runId),
       db.prepare("INSERT INTO audit_events (actor_professor_id, action, target_type, target_id, result, recorded_at) SELECT ?, 'analysis.create', 'run', ?, 'succeeded', ? WHERE EXISTS (SELECT 1 FROM analysis_runs WHERE id = ?)").bind(professor, runId, at, runId),
