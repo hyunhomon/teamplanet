@@ -25,9 +25,13 @@ export function checkSummary(summary: string, input: { parts: readonly { text: s
     const supported = action === "수정" ? /수정|추가|고쳤|반영/.test(source) : source.includes(action);
     if (summary.includes(action) && !supported) throw new EvidenceError("MODEL_INVALID");
   }
+  checkSourceCopy(summary, input);
+}
+/** Applies to every generated field that may be persisted, including limitations. */
+export function checkSourceCopy(text: string, input: { parts: readonly { text: string }[] }) {
   for (const p of input.parts) {
-    if (p.text.length >= 12 && summary.includes(p.text)) throw new EvidenceError("MODEL_INVALID");
-    for (let i = 0; i + 32 <= summary.length; i++) if (p.text.includes(summary.slice(i, i + 32))) throw new EvidenceError("MODEL_INVALID");
+    if (p.text.length >= 12 && text.includes(p.text)) throw new EvidenceError("MODEL_INVALID");
+    for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) throw new EvidenceError("MODEL_INVALID");
   }
 }
 function modelMessages(input: EvidenceInput) {

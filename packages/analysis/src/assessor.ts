@@ -2,7 +2,7 @@ import { analysisSnapshotSchema, assessmentInputSchema, assessmentOutputJsonSche
   validateAssessmentOutput, validateCorrectionOutput, type AnalysisSnapshot, type AssessmentInput, type AssessmentOutput, type NormalizedEvidence, type Part } from "@teamplanet/contracts";
 import { sha256Hex, type ImageDeps } from "@teamplanet/collection";
 import { modelProfile } from "@teamplanet/ai-core";
-import { checkSummary, EvidenceError, requestStage, verifyEvidenceGeneration, type EvidenceModelDeps, type EvidenceReceipt } from "./evidence";
+import { checkSourceCopy, checkSummary, EvidenceError, requestStage, verifyEvidenceGeneration, type EvidenceModelDeps, type EvidenceReceipt } from "./evidence";
 import { loadSpec, withSourceParts } from "./runs";
 import { assessorPromptVersion, assessorSystemPrompt } from "./assessor-prompt";
 export { assessorPromptVersion, assessorSystemPrompt } from "./assessor-prompt";
@@ -50,6 +50,7 @@ function correctionRequest(input: AssessmentInput, review: unknown) {
   const issues = input.correction?.issues, parsed = reviewOutputSchema.safeParse(review), selected: readonly string[] = input.selection.selectedCompetencies;
   if (!issues) { if (review !== null) throw new EvidenceError("MODEL_INVALID"); return null; }
   if (!parsed.success || parsed.data.runId !== input.runId || parsed.data.iteration !== 0 || parsed.data.decision !== "request_correction"
+    || new Set(issues.map(i => i.id)).size !== issues.length
     || JSON.stringify(parsed.data.issues) !== JSON.stringify(issues)
     || issues.some(i => !input.students.some(s => s.id === i.studentId) || !selected.includes(i.competency)
       || i.evidenceIds.some(id => !input.evidence.some(e => e.id === id)) || i.messageIds.some(id => !input.parts.some(p => p.messageId === id)))) throw new EvidenceError("MODEL_INVALID");
@@ -71,6 +72,7 @@ function annotate(out: AssessmentOutput, input: AssessmentInput) {
   const sources = { parts: input.parts.filter(p => cited.has(p.messageId)) }, support = input.evidence.map(e => e.summary);
   const check = (text: string) => { if (proxy.test(text)) throw new EvidenceError("MODEL_INVALID"); checkSummary(text, sources, support); };
   const expected = new Map(candidates(input).map(c => [`${c.studentId}:${c.key}`, c.evidenceIds]));
+  for (const text of [...out.assessments.flatMap(r => r.limitations), ...out.overviews.flatMap(o => o.limitations)]) checkSourceCopy(text, sources);
   for (const row of out.assessments) {
     check(row.narrative);
     const refs = [...row.evidenceIds, ...row.counterEvidenceIds];

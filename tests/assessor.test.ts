@@ -213,3 +213,24 @@ test("withdrawal, configuration, context size and provider errors stop B without
   }
   expect(billing.calls).toHaveLength(1);
 });
+
+test("B cannot return source copies through row or overview limitations", async () => {
+  const input = await caseInput("korean-thread-clarification"), p = input.parts[1]!;
+  p.text = "합성 환경에서 관찰한 오류의 재현 조건과 장치 설정을 자세히 정리하여 동료에게 전달한 원문입니다.";
+  p.end = p.text.length; p.utf8Bytes = new TextEncoder().encode(p.text).length;
+  input.evidence[0]!.citations[1] = { ...input.evidence[0]!.citations[1]!, end: p.end, hash: await sha256Hex(p.text) };
+  for (const target of ["assessments", "overviews"] as const) {
+    const raw = expectedOutput(input, "korean-thread-clarification");
+    raw[target][0]!.limitations = [p.text];
+    await rejects(input, raw, "MODEL_INVALID", 1);
+  }
+});
+
+test("duplicate correction issues are rejected before a paid request", async () => {
+  const input = await caseInput("korean-thread-clarification"), raw = expectedOutput(input, "korean-thread-clarification");
+  const issue = { id: "issue_context", code: "context_missing" as const, studentId: STUDENT, competency: "clarity" as const,
+    evidenceIds: [input.evidence[0]!.id], messageIds: [input.parts[1]!.messageId], instruction: "관찰 범위의 한계를 명시하세요." };
+  input.correction = { iteration: 1, issues: [issue, issue] };
+  const review = { version: analysisContractVersion, runId: input.runId, iteration: 0, decision: "request_correction", issues: [issue, issue], limitations: [], requiresHumanReview: true };
+  await rejects(input, { version: analysisContractVersion, iteration: 1, resolvedIssueIds: [issue.id, issue.id], assessment: raw }, "MODEL_INVALID", 0, review);
+});
