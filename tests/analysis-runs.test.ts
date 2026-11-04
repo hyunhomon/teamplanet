@@ -5,7 +5,7 @@ import type { ProtectedEnv } from "../apps/api/src/guard";
 import { collectionFixture } from "./helpers/collection";
 import * as fixtures from "@teamplanet/contracts/fixtures";
 import { analysisRunResponseSchema, jobKey, type QueueEnvelope } from "@teamplanet/contracts";
-import { extractRunEvidence, prepareRun, withChunkInput } from "@teamplanet/analysis";
+import { assessRun, extractRunEvidence, prepareRun, withChunkInput } from "@teamplanet/analysis";
 import { JobStore, LeaseLost, consumeMessage, type JobContext } from "@teamplanet/queue";
 import { createHandlers } from "../apps/consumer/src/index";
 import { purgeTeam, requestErasure, withMessageImages } from "@teamplanet/collection";
@@ -108,4 +108,36 @@ test("A production wrapper uses the real run fence: withdrawal during mocked inf
   expect(paidRequests).toBe(1);
   await expect(extractRunEvidence(deps(), model, run.id, "chunk_0")).rejects.toThrow();
   expect(paidRequests).toBe(1); // All requests above are injected mocks, never network inference.
+});
+test("B production wrapper restores only cited sources under the real run fence: withdrawal during mocked inference returns nothing", async () => {
+  const run = await create(); await prepareRun(deps(), run.id, await context(run.id));
+  const metadata = () => Response.json({ data: { id: "gen-synthetic", model: "qwen/qwen3.5-9b", provider_name: "DeepInfra" } });
+  const reply = (content: unknown) => Response.json({ id: "gen-synthetic", model: "qwen/qwen3.5-9b", choices: [{ finish_reason: "stop", message: { content: JSON.stringify(content) } }] });
+  const a = { apiKey: "synthetic", modelId: "qwen/qwen3.5-9b", fetcher: async (url: string, init: RequestInit) => {
+    if (url.includes("/generation?")) return metadata();
+    const input = JSON.parse(JSON.parse(init.body as string).messages[1].content[0].text), p = input.parts[0];
+    return reply({ version: input.version, processedPartIds: input.primaryPartIds, limitations: [], events: [{ messageIds: [p.messageId], actorIds: [p.studentId],
+      summary: "관찰 가능한 설명 발화가 있다.", behaviorTags: ["clarity"], modality: "text", citations: [{ partId: p.id, start: p.start, end: p.end, quote: p.text }],
+      imageCitations: [], limitations: [], requiresHumanReview: true }] });
+  } };
+  const { events } = await extractRunEvidence(deps(), a, run.id, "chunk_0");
+  let paidRequests = 0, withdraw = false, sources: any[] = [];
+  const b = { ...a, fetcher: async (url: string, init: RequestInit) => {
+    if (url.includes("/generation?")) return metadata();
+    paidRequests++;
+    const input = JSON.parse(JSON.parse(init.body as string).messages[1].content[0].text); sources = input.sources;
+    if (withdraw) f.sqlite.run("UPDATE consents SET status = 'withdrawn', recorded_at = ?", [clock]);
+    return reply({ version: input.version, runId: input.runId,
+      overviews: input.students.map((s: any) => ({ studentId: s.id, summary: "관찰 결과를 요약했다.", limitations: [], requiresHumanReview: false })),
+      assessments: input.candidates.map((c: any) => c.evidenceIds.length
+        ? { ...c, judgement: "observed_strength", narrative: "명료한 설명이 관찰된다.", counterEvidenceIds: [], confidence: "medium", limitations: ["합성 실행"], requiresHumanReview: false }
+        : { ...c, judgement: "insufficient_evidence", narrative: "관찰 가능한 근거가 없다.", counterEvidenceIds: [], confidence: "low", limitations: ["관찰 기회 없음"], requiresHumanReview: true }) });
+  } };
+  const result = await assessRun(deps(), b, run.id, events);
+  expect(sources.map(s => s.text)).toEqual([f.text]); expect(result.assessment.assessments.every(r => r.requiresHumanReview)).toBe(true);
+  withdraw = true;
+  await expect(assessRun(deps(), b, run.id, events)).rejects.toThrow("DATA_INVALIDATED");
+  expect(paidRequests).toBe(2);
+  await expect(assessRun(deps(), b, run.id, events)).rejects.toThrow();
+  expect(paidRequests).toBe(2); // All requests above are injected mocks, never network inference.
 });

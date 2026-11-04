@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { analysisId, assessStudents, type EvidenceError } from "@teamplanet/analysis";
 import { sha256Hex } from "@teamplanet/collection";
 import { analysisContractVersion, type AssessmentInput, type NormalizedEvidence } from "@teamplanet/contracts";
-import { analysisFixtureRunId, evidenceInputFixture } from "@teamplanet/contracts/analysis-fixtures";
+import { analysisFailureFixtures, analysisFixtureRunId, assessmentInputFixture, assessmentOutputFixture, correctionOutputFixture, correctionRequestFixture,
+  evidenceInputFixture } from "@teamplanet/contracts/analysis-fixtures";
 import { evaluationCases, evaluationStudentId } from "@teamplanet/contracts/evaluation-fixtures";
 import { students } from "@teamplanet/contracts/fixtures";
 import { modelProfile, providerPolicy } from "@teamplanet/ai-core";
@@ -53,9 +54,9 @@ function model(raw: unknown) {
   return { deps, calls, chat: (fn: typeof chat) => { chat = fn; } };
 }
 const sent = (calls: { init: RequestInit }[]) => JSON.parse(calls[0]!.init.body as string);
-async function rejects(input: AssessmentInput, raw: unknown, code: string, paidCalls?: number) {
+async function rejects(input: AssessmentInput, raw: unknown, code: string, paidCalls?: number, review: unknown = null) {
   const m = model(raw);
-  await expect(assessStudents(m.deps, input, allowed)).rejects.toThrow(code);
+  await expect(assessStudents(m.deps, input, allowed, review)).rejects.toThrow(code);
   if (paidCalls !== undefined) expect(m.calls).toHaveLength(paidCalls);
 }
 
@@ -160,18 +161,38 @@ test("activity-volume proxies and grades are rejected, and uncited extra message
   expect(sent(more.calls).messages).toEqual(sent(base.calls).messages);
 });
 
-test("one correction round must resolve exactly the requested issues without new evidence", async () => {
+test("one correction round needs C's first request and must resolve exactly its issues without new evidence", async () => {
   const input = await caseInput("korean-thread-clarification"), raw = expectedOutput(input, "korean-thread-clarification");
-  input.correction = { iteration: 1, issues: [{ id: "issue_context", code: "context_missing", studentId: STUDENT, competency: "clarity", evidenceIds: [input.evidence[0]!.id],
-    messageIds: [input.parts[1]!.messageId], instruction: "단일 사건의 관찰 한계를 명시하세요." }] };
-  const m = model({ version: analysisContractVersion, iteration: 1, resolvedIssueIds: ["issue_context"], assessment: raw });
-  const result = await assessStudents(m.deps, input, allowed);
+  const context = part(await analysisId("message", "uncited-context"), "참고로 재현 기기는 합성 기기예요.", PEER); input.parts.push(context);
+  const issues = [{ id: "issue_context", code: "context_missing" as const, studentId: STUDENT, competency: "clarity" as const, evidenceIds: [input.evidence[0]!.id],
+    messageIds: [context.messageId], instruction: "단일 사건의 관찰 한계를 명시하세요." }];
+  const review = { version: analysisContractVersion, runId: input.runId, iteration: 0, decision: "request_correction", issues, limitations: [], requiresHumanReview: false };
+  input.correction = { iteration: 1, issues };
+  const corrected = { version: analysisContractVersion, iteration: 1, resolvedIssueIds: ["issue_context"], assessment: raw };
+  const m = model(corrected), result = await assessStudents(m.deps, input, allowed, review);
   expect(result.iteration).toBe(1); expect(result.resolvedIssueIds).toEqual(["issue_context"]);
-  expect(sent(m.calls).response_format.json_schema.name).toBe("teamplanet_correction_v1");
-  await rejects(input, { version: analysisContractVersion, iteration: 1, resolvedIssueIds: [], assessment: raw }, "MODEL_INVALID");
-  await rejects(input, { version: analysisContractVersion, iteration: 1, resolvedIssueIds: ["issue_context"],
-    assessment: { ...raw, assessments: [{ ...raw.assessments[0]!, evidenceIds: ["evidence_00000000-0000-4000-8000-000000009999"] }, raw.assessments[1]] } }, "MODEL_INVALID");
-  await rejects(input, raw, "MODEL_INVALID");
+  const body = sent(m.calls);
+  expect(body.response_format.json_schema.name).toBe("teamplanet_correction_v1");
+  expect(JSON.parse(body.messages[1].content[0].text).sources.map((s: any) => s.messageId)).toContain(context.messageId);
+  // Only C's iteration-0 request for exactly these issues starts a correction; anything else stops before a paid call.
+  for (const bad of [null, { ...review, iteration: 1 }, { ...review, decision: "accept", issues: [] }, { ...review, issues: [{ ...issues[0]!, id: "issue_other" }] }])
+    await rejects(input, corrected, "MODEL_INVALID", 0, bad);
+  await rejects({ ...input, correction: null }, raw, "MODEL_INVALID", 0, review);
+  for (const out of [{ ...corrected, resolvedIssueIds: [] }, raw,
+    { ...corrected, assessment: { ...raw, assessments: [{ ...raw.assessments[0]!, evidenceIds: ["evidence_00000000-0000-4000-8000-000000009999"] }, raw.assessments[1]] } }])
+    await rejects(input, out, "MODEL_INVALID", 1, review);
+});
+
+test("#16 shared fixtures: the synthetic fingerprint is untraceable, a real one passes and the failure fixtures stay rejected", async () => {
+  const shared = clone(assessmentInputFixture) as unknown as AssessmentInput;
+  await rejects(shared, assessmentOutputFixture, "DATA_INVALIDATED", 0);
+  shared.evidence[0]!.citations[0]!.hash = await sha256Hex(shared.parts[0]!.text);
+  const result = await assessStudents(model(assessmentOutputFixture).deps, shared, allowed);
+  expect(result.assessment.overviews).toHaveLength(1); expect(result.assessment.assessments[0]!.limitations).toContain("합성 지문이며 실제 검증 지문이 아니다.");
+  for (const raw of [analysisFailureFixtures.missingStudent, analysisFailureFixtures.fakeEvidence]) await rejects(shared, raw, "MODEL_INVALID", 1);
+  shared.correction = { iteration: 1, issues: correctionRequestFixture.issues } as AssessmentInput["correction"];
+  expect((await assessStudents(model(correctionOutputFixture).deps, shared, allowed, correctionRequestFixture)).resolvedIssueIds).toEqual(["issue_context"]);
+  await rejects(shared, correctionOutputFixture, "MODEL_INVALID", 0, analysisFailureFixtures.secondCorrection);
 });
 
 test("withdrawal, configuration, context size and provider errors stop B without retry or fallback", async () => {

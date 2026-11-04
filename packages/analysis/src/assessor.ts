@@ -1,14 +1,17 @@
-import { assessmentInputSchema, assessmentOutputJsonSchema, competencyLabels, correctionOutputJsonSchema, validateAssessmentOutput, validateCorrectionOutput,
-  type AssessmentInput, type AssessmentOutput } from "@teamplanet/contracts";
-import { sha256Hex } from "@teamplanet/collection";
+import { analysisSnapshotSchema, assessmentInputSchema, assessmentOutputJsonSchema, competencyLabels, correctionOutputJsonSchema, reviewOutputSchema,
+  validateAssessmentOutput, validateCorrectionOutput, type AnalysisSnapshot, type AssessmentInput, type AssessmentOutput, type NormalizedEvidence, type Part } from "@teamplanet/contracts";
+import { sha256Hex, type ImageDeps } from "@teamplanet/collection";
 import { modelProfile } from "@teamplanet/ai-core";
 import { checkSummary, EvidenceError, requestStage, verifyEvidenceGeneration, type EvidenceModelDeps, type EvidenceReceipt } from "./evidence";
-import { assessorSystemPrompt } from "./assessor-prompt";
+import { loadSpec, withSourceParts } from "./runs";
+import { assessorPromptVersion, assessorSystemPrompt } from "./assessor-prompt";
 export { assessorPromptVersion, assessorSystemPrompt } from "./assessor-prompt";
 export type AssessmentResult = { runId: string; iteration: 0 | 1; assessment: AssessmentOutput; resolvedIssueIds: string[]; receipt: EvidenceReceipt };
 const distinct = (values: string[]) => [...new Set(values)].filter(Boolean).sort();
 // On top of the A inference check: scores, rankings and activity-volume proxies never describe a competency.
 const proxy = /점수|등급|순위|학점|말수|활동량|참여도|답장\s*수|이모지\s*수|링크\s*(?:수|개수)|\b(?:score|rank(?:ing)?)\b/i;
+// The messages B may read: those its evidence cites plus those a correction issue names.
+const citedIds = (input: AssessmentInput) => new Set([...input.evidence.flatMap(e => e.messageIds), ...(input.correction?.issues.flatMap(i => i.messageIds) ?? [])]);
 const candidates = (input: AssessmentInput) => input.students.flatMap(s => input.selection.selectedCompetencies.map(key => ({ studentId: s.id, key,
   evidenceIds: input.evidence.filter(e => e.actorIds.includes(s.id) && e.behaviorTags.includes(key)).map(e => e.id).sort() })));
 
@@ -42,8 +45,18 @@ async function traceEvidence(input: AssessmentInput) {
     if (e.actorIds.some(id => !authors.has(id))) throw new EvidenceError("DATA_INVALIDATED");
   }
 }
+/** Only C's first-round correction request may start the single B correction (#16 STAGE_CORRECTION_LIMIT); checked before any paid call. */
+function correctionRequest(input: AssessmentInput, review: unknown) {
+  const issues = input.correction?.issues, parsed = reviewOutputSchema.safeParse(review), selected: readonly string[] = input.selection.selectedCompetencies;
+  if (!issues) { if (review !== null) throw new EvidenceError("MODEL_INVALID"); return null; }
+  if (!parsed.success || parsed.data.runId !== input.runId || parsed.data.iteration !== 0 || parsed.data.decision !== "request_correction"
+    || JSON.stringify(parsed.data.issues) !== JSON.stringify(issues)
+    || issues.some(i => !input.students.some(s => s.id === i.studentId) || !selected.includes(i.competency)
+      || i.evidenceIds.some(id => !input.evidence.some(e => e.id === id)) || i.messageIds.some(id => !input.parts.some(p => p.messageId === id)))) throw new EvidenceError("MODEL_INVALID");
+  return parsed.data;
+}
 function modelMessages(input: AssessmentInput) {
-  const cited = new Set(input.evidence.flatMap(e => e.messageIds));
+  const cited = citedIds(input);
   const data = JSON.stringify({ version: input.version, runId: input.runId, selection: input.selection,
     rubric: input.selection.selectedCompetencies.map(key => ({ key, label: competencyLabels[key] })), students: input.students, period: input.period,
     limitations: input.limitations, correction: input.correction, evidence: input.evidence, candidates: candidates(input),
@@ -54,7 +67,7 @@ function modelMessages(input: AssessmentInput) {
 }
 /** Rejects unfounded or proxy-based claims, then only ever adds limitations and review flags: B cannot hide what A or the input flagged. */
 function annotate(out: AssessmentOutput, input: AssessmentInput) {
-  const evidence = new Map(input.evidence.map(e => [e.id, e])), cited = new Set(input.evidence.flatMap(e => e.messageIds));
+  const evidence = new Map(input.evidence.map(e => [e.id, e])), cited = citedIds(input);
   const sources = { parts: input.parts.filter(p => cited.has(p.messageId)) }, support = input.evidence.map(e => e.summary);
   const check = (text: string) => { if (proxy.test(text)) throw new EvidenceError("MODEL_INVALID"); checkSummary(text, sources, support); };
   const expected = new Map(candidates(input).map(c => [`${c.studentId}:${c.key}`, c.evidenceIds]));
@@ -72,10 +85,13 @@ function annotate(out: AssessmentOutput, input: AssessmentInput) {
     o.requiresHumanReview ||= out.assessments.some(r => r.studentId === o.studentId && r.requiresHumanReview);
   }
 }
-/** For already-authorized memory input: whole-run A evidence plus the parts of the messages it cites. No internal paid retry. */
-export async function assessStudents(deps: EvidenceModelDeps, value: unknown, assertCurrent: () => Promise<void>): Promise<AssessmentResult> {
+/**
+ * For already-authorized memory input: whole-run A evidence plus the parts of the messages it cites. A correction needs C's
+ * iteration-0 review that requested it. Production orchestration should use assessRun below. No internal paid retry.
+ */
+export async function assessStudents(deps: EvidenceModelDeps, value: unknown, assertCurrent: () => Promise<void>, review: unknown = null): Promise<AssessmentResult> {
   if (typeof deps.apiKey !== "string" || !deps.apiKey.trim() || deps.modelId !== modelProfile.model) throw new EvidenceError("CONFIG_INVALID");
-  const input = assessmentInputSchema.parse(value), correction = input.correction;
+  const input = assessmentInputSchema.parse(value), correction = input.correction, request = correctionRequest(input, review);
   await traceEvidence(input);
   const messages = modelMessages(input);
   try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
@@ -84,12 +100,35 @@ export async function assessStudents(deps: EvidenceModelDeps, value: unknown, as
   let assessment: AssessmentOutput, resolvedIssueIds: string[] = [];
   try {
     const raw = JSON.parse(content);
-    if (correction) ({ assessment, resolvedIssueIds } = validateCorrectionOutput(raw, input, { version: input.version, runId: input.runId, iteration: 0,
-      decision: "request_correction", issues: correction.issues, limitations: [], requiresHumanReview: true }));
+    if (request) ({ assessment, resolvedIssueIds } = validateCorrectionOutput(raw, input, request));
     else assessment = validateAssessmentOutput(raw, input);
   } catch { throw new EvidenceError("MODEL_INVALID"); }
   annotate(assessment, input);
   const receipt = await verifyEvidenceGeneration(deps, generationId, deps.modelId);
   try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
   return { runId: input.runId, iteration: correction ? 1 : 0, assessment, resolvedIssueIds, receipt };
+}
+/** Production wrapper: restores only the cited (and correction-named) messages from current Slack under the real run fence. */
+export async function assessRun(deps: ImageDeps, model: EvidenceModelDeps, runId: string, evidence: readonly NormalizedEvidence[], review: unknown = null) {
+  const spec = await loadSpec(deps.db, runId);
+  if (!spec?.manifest_json || spec.status === "cancelled") throw new EvidenceError("DATA_INVALIDATED");
+  let config: AnalysisSnapshot;
+  try { config = analysisSnapshotSchema.parse(JSON.parse(spec.snapshot_json)); } catch { throw new EvidenceError("CONFIG_INVALID"); }
+  if (config.configuredModel !== model.modelId || config.configuredProvider !== modelProfile.provider || config.promptVersion !== assessorPromptVersion) throw new EvidenceError("CONFIG_INVALID");
+  const parsed = review === null ? null : reviewOutputSchema.safeParse(review);
+  if (parsed && !parsed.data?.issues.length) throw new EvidenceError("MODEL_INVALID");
+  const issues = parsed?.data?.issues ?? null;
+  const wanted: Part[] = [];
+  for (const id of new Set([...evidence.flatMap(e => e.messageIds), ...(issues ?? []).flatMap(i => i.messageIds)])) {
+    const row = await deps.db.prepare("SELECT parts_json FROM analysis_sources WHERE run_id = ? AND id = ?").bind(runId, id).first<{ parts_json: string }>();
+    if (!row) throw new EvidenceError("DATA_INVALIDATED");
+    wanted.push(...JSON.parse(row.parts_json));
+  }
+  return withSourceParts(deps, spec, wanted, async (parts, current) => {
+    const input = assessmentInputSchema.parse({ version: "analysis-stages-v1", runId, selection: config.rubric, students: JSON.parse(spec.students_json), parts,
+      limitations: JSON.parse(spec.manifest_json!).limitations, period: { from: spec.from_ts, to: spec.to_ts, timezone: spec.timezone }, evidence,
+      correction: issues === null ? null : { iteration: 1, issues } });
+    try { return await assessStudents(model, input, current, review); }
+    finally { for (const p of input.parts) { p.text = ""; for (const image of p.images) image.dataUrl = ""; } }
+  });
 }

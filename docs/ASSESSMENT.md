@@ -1,17 +1,17 @@
 # B 정성 평가 adapter (#18)
 
-`@teamplanet/analysis`의 `assessStudents(deps, input, assertCurrent)`는 #16 `assessmentInputSchema` 메모리 입력을 받아 B 역할을 한 번 호출한다. 입력은 실행 전체의 A 사건(`normalizedEvidenceSchema`, #17 `mergeEvidenceChunks` 결과)과 그 사건이 인용한 메시지의 원문 parts다. `assessorSystemPrompt`만 system role이고 원문·사건 요약은 user data다. 호출자는 전송 전·결과 수신 뒤 `assertCurrent`를 제공해야 한다. Queue stage handler·결과 저장·근거 메시지 원문 로드(`withChunkInput` 일반화)·상태 전이는 #20이고 C는 #19다.
+`@teamplanet/analysis`의 `assessStudents(deps, input, assertCurrent, review?)`는 #16 `assessmentInputSchema` 메모리 입력을 받아 B 역할을 한 번 호출한다. 입력은 실행 전체의 A 사건(`normalizedEvidenceSchema`, #17 `mergeEvidenceChunks` 결과)과 그 사건이 인용한 메시지의 원문 parts다. `assessorSystemPrompt`만 system role이고 원문·사건 요약은 user data다. 호출자는 전송 전·결과 수신 뒤 `assertCurrent`를 제공해야 한다. 운영 경로는 `assessRun(deps, model, runId, evidence, review?)`이다. snapshot의 모델·공급자·프롬프트 버전을 대조하고, 인용 메시지(수정 시 issue가 지목한 메시지 포함)만 `withSourceParts`로 현재 Slack에서 메모리에 복원한다. `withSourceParts`는 `withChunkInput`과 같은 원문/이미지 재검증·`runValidityGuard`를 공유하고 callback 뒤 text/dataURL을 비운다. Queue stage handler·결과 저장·상태 전이는 #20이고 C는 #19다.
 
 ## 전송과 공급자 확인
 
 #17과 같은 `requestStage`·`verifyEvidenceGeneration`을 쓴다. `qwen/qwen3.5-9b`·DeepInfra BF16 only·ZDR·reasoning off·fallback false, strict JSON schema(`teamplanet_assessment_v1`, 수정 시 `teamplanet_correction_v1`)를 강제한다. 실제 공급자는 generation metadata로만 확인한다. 401/403/429/5xx/실제 402 분류, Retry-After 보존, 원시 본문 비노출과 자동 유료 재시도 없음도 A와 같다. 오류는 같은 `EvidenceError` 코드다. 앱 비용 상한·자동 모델 폴백은 추가하지 않는다.
 
-모델에는 선택 역량과 라벨, 학생, 기간, 입력 한계, A 사건, 학생×선택 역량별 후보 근거 ID(`candidates`), 인용된 메시지의 원문 parts만 보낸다. 인용되지 않은 메시지는 보내지 않으므로 사건이 없는 잡담·말수 변화가 B 입력을 바꾸지 않는다. 이미지 바이트는 다시 보내지 않고 A의 검증된 이미지 사건만 쓴다. JSON이 150000 UTF8바이트를 넘으면 표본 추출 없이 `CONTEXT_LIMIT`다.
+모델에는 선택 역량과 라벨, 학생, 기간, 입력 한계, A 사건, 학생×선택 역량별 후보 근거 ID(`candidates`), 인용된 메시지(수정 시 issue가 지목한 메시지 포함)의 원문 parts만 보낸다. 인용되지 않은 메시지는 보내지 않으므로 사건이 없는 잡담·말수 변화가 B 입력을 바꾸지 않는다. 이미지 바이트는 다시 보내지 않고 A의 검증된 이미지 사건만 쓴다. JSON이 150000 UTF8바이트를 넘으면 표본 추출 없이 `CONTEXT_LIMIT`다.
 
 ## 근거 역추적 (전송 전)
 
 - 사건의 모든 메시지 ID가 입력 parts에 있어야 하고, 모든 인용은 해당 메시지 parts를 UTF16 offset으로 이어 붙인 원문 slice의 SHA256과 같아야 한다. 원문이 바뀌었거나 범위를 벗어나면 `DATA_INVALIDATED`이며 모델을 호출하지 않는다.
-- 사건의 행위자는 인용 메시지 작성자이거나 입력에 포함된 이미지의 검증된 업로더여야 한다. 다른 학생의 발화를 그 학생 행동으로 귀속하면 `DATA_INVALIDATED`다. 이미지만으로 귀속된 사건은 #20이 해당 이미지 metadata를 B 입력에 포함해야 통과한다.
+- 사건의 행위자는 인용 메시지 작성자이거나 입력에 포함된 이미지의 검증된 업로더여야 한다. 다른 학생의 발화를 그 학생 행동으로 귀속하면 `DATA_INVALIDATED`다. `assessRun`은 인용 메시지의 이미지를 함께 복원해 업로더를 확인하며, 업로더가 불명이거나 이미지가 없으면 이미지만으로 귀속된 사건을 통과시키지 않는다.
 - 알 수 없는 학생·선택하지 않은 역량 태그·중복 ID는 `MODEL_INVALID`다.
 
 ## 출력 검증과 보존
@@ -26,8 +26,8 @@
 
 ## 수정 1회
 
-`correction`이 있으면 `validateCorrectionOutput`으로 `resolvedIssueIds`가 요청 issue ID와 정확히 같고 수정 결과가 같은 검증을 통과하는지 확인한다. 새 근거·원문을 만들 수 없다. 수정은 `iteration: 1` 한 번뿐이며 C 재검토 1회 뒤 미해결은 사람 검토다(#19/#20의 전이 검사).
+`correction`이 있으면 그 수정을 요청한 C의 검토 결과(`reviewOutputSchema`) 전체를 `review`로 받는다. iteration 0의 `request_correction`이고 issue가 입력과 정확히 같으며 알려진 학생·선택 역량·근거·메시지만 가리킬 때만 유료 호출 전에 통과한다. 그래서 두 번째 수정 요청(`analysisFailureFixtures.secondCorrection`)은 모델을 부르지 않는다. 결과는 `validateCorrectionOutput`으로 `resolvedIssueIds`가 요청 issue ID와 정확히 같고 수정 결과가 같은 검증을 통과하는지 확인한다. 새 근거·원문을 만들 수 없다. 수정은 `iteration: 1` 한 번뿐이며 C 재검토 1회 뒤 미해결은 사람 검토다(#19/#20의 전이 검사).
 
 ## 한계
 
-ID·범위·표현 검사는 해석의 교육적 타당성을 증명하지 않는다. 언어 검사는 완전한 의미 판별기가 아니다. 실제 Qwen 호출의 한국어 품질·편향·장문 누락, 교수 최종 판단은 #24/#25와 교수 검토에 남는다. 합성 검증: `tests/assessor.test.ts`(공유 한국어 평가 fixture의 강점·실질 공유·반례·합의 불일치·관찰 부족, 입력 주입, 원문 변경·범위 밖 인용·타인 귀속·이미지 업로더 미확인/불명, 누락/중복/미선택, 활동량·점수 표현, 잡담 추가 불변, 수정 1회, 철회·설정·context·402). 실제 모델·학생·Slack 호출은 하지 않았다.
+ID·범위·표현 검사는 해석의 교육적 타당성을 증명하지 않는다. 언어 검사는 완전한 의미 판별기가 아니다. 실제 Qwen 호출의 한국어 품질·편향·장문 누락, 교수 최종 판단은 #24/#25와 교수 검토에 남는다. 합성 검증: `tests/assessor.test.ts`(#16 `assessmentInputFixture`/`assessmentOutputFixture`/`correction*Fixture`/`analysisFailureFixtures`, 공유 한국어 평가 fixture의 강점·실질 공유·반례·합의 불일치·관찰 부족, 입력 주입, 원문 변경·범위 밖 인용·타인 귀속·이미지 업로더 미확인/불명, 누락/중복/미선택, 활동량·점수 표현, 잡담 추가 불변, 수정 1회·두 번째 수정 거부, 철회·설정·context·402)와 `tests/analysis-runs.test.ts`의 실제 run fence(추론 중 철회 시 결과 없음, 인용 원문만 전송). 실제 모델·학생·Slack 호출은 하지 않았다.
