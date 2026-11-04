@@ -2,7 +2,7 @@
 
 팀 프로젝트의 **지정된 Slack 채널 내 전체 대화**를 수동 기록 없이 수집하여, 교수에게 **선택한 커뮤니케이션 역량별 정성 평가와 원문 근거**를 제공하는 평가 지원 도구입니다.
 
-> Astro SSR 웹과 Hono API의 실행 가능한 초기 구조, D1 마이그레이션, GitHub Actions production CD가 구성되어 있습니다. 교수 인증·권한·Slack OAuth/동의·참조 기반 Events/History 수집과 설정 UI·학생 개인 QR 재확인을 구현했습니다. 실제 메일·Slack 연결 검증은 운영 설정 후 #24/#25에서 수행하며 AI 분석은 후속 구현입니다.
+> Astro SSR 웹과 Hono API, D1·Queue 및 GitHub Actions production CD를 사용합니다. 교수 인증·Slack/동의·참조 수집·개인 QR·문의·분석 화면과 A/B/C Queue 통합을 구현했습니다. 실제 메일·Slack·모델 연결 및 품질 검증은 운영 설정 후 #24/#25에서 수행합니다. 결과 뷰어·교수 확정·출력은 #22/#23/#31의 후속 작업입니다.
 
 교수 로그인 UI는 `/login`에서 실제 `/v1/auth/*` 계약을 사용합니다. 인증 API가 제공되기 전에는 서비스 준비 안내를 표시하며, 로그인 셸의 합성 응답 검증과 실제 서버 통합 범위는 [로그인 UI 문서](docs/WEB_AUTH.md)에 정리했습니다.
 
@@ -24,6 +24,7 @@
 - `docs/ARCHITECTURE.md` 모노레포 및 Cloudflare 구성
 - `docs/AI_ORCHESTRATION.md` 3단계 멀티모델 파이프라인
 - `docs/ANALYSIS_CONTRACT.md` 실행·참조 manifest·A/B/C 공유 계약과 독립 개발 fixture
+- `docs/ANALYSIS_PIPELINE.md` 실제 A/B/C Queue 실행·정규화 결과·공급자 오류·metadata 재시도와 운영 설정
 - `docs/ANALYSIS_DASHBOARD.md` 교수 소유 팀·기간 프리뷰·멱등 실행/복원·진행 및 취소/재개
 - `docs/EVIDENCE_EXTRACTION.md` A adapter·인용/이미지 검증·overlap 병합과 한계
 - `docs/INDEPENDENT_REVIEW.md` C adapter·원문 대조·수정 1회·이견 보존과 사람 검토
@@ -46,7 +47,7 @@
 - `prompts/` 모델 역할별 프롬프트 초안
 - `apps/web/` Astro SSR + React + Tailwind 웹
 - `apps/api/` D1에 연결된 Hono Worker API
-- `apps/consumer/` Queue/cron Worker (합성 probe, 실제 수집·분석 handler는 후속 구현)
+- `apps/consumer/` Queue/cron Worker (Events/History·분석 준비·A/B/C handler, 정리·outbox)
 
 ## 시작
 

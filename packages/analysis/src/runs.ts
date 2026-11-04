@@ -114,7 +114,7 @@ export async function prepareRun(deps: ImageDeps, runId: string, context: JobCon
     }
     writes.push(db.prepare(`INSERT INTO queue_jobs (job_key, job_json, created_at, updated_at)
       SELECT 'run:' || run_id || ':evidence_extraction:' || id, json_object('kind','analysis.stage','runId',run_id,'stage','evidence_extraction','chunkId',id), ?, ?
-      FROM analysis_chunks WHERE run_id = ? ON CONFLICT(job_key) DO NOTHING`).bind(deps.now(), deps.now(), runId));
+      FROM analysis_chunks WHERE run_id = ? ORDER BY ordinal LIMIT 1 ON CONFLICT(job_key) DO NOTHING`).bind(deps.now(), deps.now(), runId));
     writes.unshift(db.prepare(`WITH expected AS (SELECT json_extract(p.value,'$.id') AS id FROM analysis_sources s, json_each(s.parts_json) p WHERE s.run_id = ?),
       actual AS (SELECT json_extract(p.value,'$.id') AS id FROM analysis_chunks c, json_each(c.plan_json,'$.parts') p WHERE c.run_id = ?)
       SELECT json(CASE WHEN (SELECT COUNT(*) FROM actual) = (SELECT COUNT(*) FROM expected)
@@ -148,7 +148,7 @@ export async function withChunkInput<T>(deps: ImageDeps, runId: string, chunkId:
   });
 }
 /** Restores the given parts of a prepared run from current Slack in memory (A: one chunk, B: the cited messages). */
-export async function withSourceParts<T>(deps: ImageDeps, spec: Spec, wanted: readonly Part[], use: (parts: EvidenceInput["parts"], assertCurrent: () => Promise<void>) => Promise<T>): Promise<T> {
+export async function withSourceParts<T>(deps: ImageDeps, spec: Spec, wanted: readonly Part[], use: (parts: EvidenceInput["parts"], assertCurrent: () => Promise<void>) => Promise<T>, options: { metadataImages?: boolean } = {}): Promise<T> {
   const db = deps.db, runId = spec.run_id, ids = [...new Set(wanted.map(p => p.messageId))];
   const parts: EvidenceInput["parts"] = [], checks: (() => Promise<void>)[] = [];
   const assertCurrent = async () => {
@@ -181,7 +181,8 @@ export async function withSourceParts<T>(deps: ImageDeps, spec: Spec, wanted: re
         });
       });
       for (const p of wanted.filter(p => p.messageId === row.id)) parts.push({ ...p, text: memory.source.text.slice(p.start, p.end), studentId: row.student_id, sentAt: new Date(Math.floor(Number(row.slack_ts) * 1000)).toISOString(),
-        images: attachments.filter(a => p.imageIds.includes(a.id)).flatMap(a => { const image = memory.images.find(i => i.fileId === a.fileId); return image ? [{ id: a.id, dataUrl: image.dataUrl, studentId: image.studentId, limitations: image.limitations }] : []; }) });
+        images: attachments.filter(a => p.imageIds.includes(a.id)).flatMap(a => { const image = memory.images.find(i => i.fileId === a.fileId); return image ? [{ id: a.id, dataUrl: options.metadataImages ? `data:${image.mime};metadata-only` : image.dataUrl, studentId: image.studentId, limitations: image.limitations }] : []; }) });
+      if (options.metadataImages) for (const image of memory.images) image.dataUrl = "";
       try { return await load(index + 1); } finally { for (const p of parts) { p.text = ""; for (const image of p.images) image.dataUrl = ""; } }
     });
   }

@@ -1,28 +1,45 @@
 import { Hono, type Context } from "hono";
 import type { Queue } from "@cloudflare/workers-types";
-import { analysisRunResponseSchema, analysisDashboardSchema, analysisPreviewRequestSchema, analysisRunListSchema, createAnalysisRunSchema, jobKey, rubricSelectionSchema, runIdSchema, teamIdSchema, type QueueEnvelope } from "@teamplanet/contracts";
-import { loadSpec, outboxInsert, snapshot, type Spec } from "@teamplanet/analysis";
-import { processingWriteGuard, runValidityGuard, sha256Hex, validConsentSql } from "@teamplanet/collection";
+import { analysisErrorSchema, pipelineMetadataSchema, analysisRunResponseSchema, analysisDashboardSchema, analysisPreviewRequestSchema, analysisRunListSchema, createAnalysisRunSchema, jobKey, rubricSelectionSchema, runIdSchema, teamIdSchema, type QueueEnvelope } from "@teamplanet/contracts";
+import { loadSpec, readRunArtifacts, snapshot, type Spec } from "@teamplanet/analysis";
+import { processingWriteGuard, runValidityGuard, sha256Hex, validConsentSql, SourceUnavailable, type SlackFetch } from "@teamplanet/collection";
 import { dispatchJob, JobStore } from "@teamplanet/queue";
 import { apiError, parseBody } from "./errors";
 import { owned, type ProtectedEnv } from "./guard";
 import { analysisEligibility, eligibilityError } from "./analysis-eligibility";
-type Env = { Bindings: ProtectedEnv["Bindings"] & { WORK_QUEUE?: Queue<QueueEnvelope> }; Variables: ProtectedEnv["Variables"] };
-export function analysisRoutes(now: () => number) {
+type Env = { Bindings: ProtectedEnv["Bindings"] & { WORK_QUEUE?: Queue<QueueEnvelope>; SLACK_TOKEN_KEY?: string }; Variables: ProtectedEnv["Variables"] };
+export function analysisRoutes(now: () => number, send: SlackFetch = (url, init) => fetch(url, init)) {
   const routes = new Hono<Env>();
   const missing = (c: Context) => apiError(c, "NOT_FOUND", "리소스를 찾을 수 없습니다.");
   async function response(c: Context<Env>, spec: Spec) {
     const db = c.env.DB; let valid = false;
     if (spec.manifest_json && spec.status !== "cancelled") { try { await runValidityGuard(db, spec.run_id, now()).run(); valid = true; } catch {} }
-    const progress = await db.prepare(`SELECT (SELECT COUNT(*) FROM analysis_sources WHERE run_id = ?) AS sources,
+    const detail = await db.prepare(`SELECT stage_metadata_json, (SELECT COUNT(*) FROM analysis_sources WHERE run_id = ?) AS sources,
       (SELECT COUNT(*) FROM analysis_chunks WHERE run_id = ?) AS chunks,
-      (SELECT COUNT(*) FROM analysis_stage_results WHERE run_id = ? AND stage = 'evidence_extraction') AS completedChunks`).bind(spec.run_id, spec.run_id, spec.run_id).first<any>();
-    const jobs = await db.prepare("SELECT status, error_code FROM queue_jobs WHERE json_extract(job_json,'$.runId') = ? AND error_code IS NOT NULL").bind(spec.run_id).all<any>();
-    const errors = jobs.results.map(job => ({ code: job.error_code === "HANDLER_UNREGISTERED" ? "HANDLER_UNREGISTERED" : job.error_code === "DATA_INVALIDATED" ? "DATA_INVALIDATED" : "JOB_FAILED", retryable: job.status === "retry" }));
+      (SELECT COUNT(*) FROM analysis_stage_results WHERE run_id = ? AND stage = 'evidence_extraction') AS completedChunks,
+      (SELECT json_group_array(json_object('status',status,'error_code',error_code)) FROM queue_jobs WHERE json_extract(job_json,'$.runId') = ? AND error_code IS NOT NULL AND status IN ('dead','retry')) AS jobs_json
+      FROM analysis_runs WHERE id = ?`).bind(spec.run_id, spec.run_id, spec.run_id, spec.run_id, spec.run_id)
+      .first<{ stage_metadata_json: string | null; sources: number; chunks: number; completedChunks: number; jobs_json: string }>();
+    const progress = { sources: detail?.sources ?? 0, chunks: detail?.chunks ?? 0, completedChunks: detail?.completedChunks ?? 0 };
+    const jobs = { results: JSON.parse(detail?.jobs_json ?? "[]") as { status: string; error_code: string }[] };
+    const errors: ReturnType<typeof analysisErrorSchema.parse>[] = jobs.results.map(job => {
+      const error = analysisErrorSchema.safeParse({ code: job.error_code, retryable: job.status === "retry" });
+      return error.success ? error.data : { code: "JOB_FAILED", retryable: job.status === "retry" };
+    });
+    let info: ReturnType<typeof pipelineMetadataSchema.safeParse>;
+    try { info = pipelineMetadataSchema.safeParse(JSON.parse(detail?.stage_metadata_json ?? "null")); } catch { info = pipelineMetadataSchema.safeParse(null); }
+    if (info.success && info.data.error) {
+      const { stage, chunkId, ...error } = info.data.error;
+      error.retryable &&= jobs.results.some(job => job.error_code === error.code && job.status === "retry");
+      const index = errors.findIndex(existing => existing.code === error.code);
+      if (index === -1) errors.push(error); else errors[index] = error;
+    }
     const invalid = spec.manifest_json !== null && !valid && spec.status !== "cancelled";
     if (invalid) errors.push({ code: "DATA_INVALIDATED", retryable: false });
+    const interrupted = ["queued", "collecting", "evidence_extraction", "assessment", "review"].includes(spec.status)
+      && jobs.results.some(job => job.status === "dead" && ["ATTEMPTS_EXHAUSTED", "DELIVERY_EXHAUSTED", "HANDLER_FAILURE"].includes(job.error_code));
     return analysisRunResponseSchema.parse({ id: spec.run_id, teamId: spec.team_id, from: spec.from_ts, to: spec.to_ts, timezone: spec.timezone,
-      status: invalid ? "failed_data" : spec.status, snapshot: JSON.parse(spec.snapshot_json), manifest: valid ? JSON.parse(spec.manifest_json!) : null,
+      status: invalid ? "failed_data" : interrupted ? "failed_model" : spec.status, snapshot: JSON.parse(spec.snapshot_json), manifest: valid ? JSON.parse(spec.manifest_json!) : null,
       valid, progress, errors, version: spec.version });
   }
   routes.get("/analysis-dashboard", async c => {
@@ -107,7 +124,9 @@ export function analysisRoutes(now: () => number) {
     await db.batch([db.prepare("UPDATE analysis_runs SET status = 'cancelled' WHERE id = ? AND status NOT IN ('awaiting_professor','finalized')").bind(id),
       db.prepare(`UPDATE queue_jobs SET status = 'dead', error_code = 'CANCELLED', lease_token = NULL, lease_until = NULL WHERE json_extract(job_json,'$.runId') = ?
         AND status IN ('pending','running','retry') AND EXISTS (SELECT 1 FROM analysis_runs WHERE id = ? AND status = 'cancelled')`).bind(id, id)]);
-    const spec = await loadSpec(db, id); return spec ? c.json(await response(c, spec)) : missing(c);
+    const spec = await loadSpec(db, id);
+    if (spec && spec.status !== "cancelled") return apiError(c, "CONFLICT", "교수 검토 단계로 전환돼 취소할 수 없습니다.");
+    return spec ? c.json(await response(c, spec)) : missing(c);
   });
   routes.post("/analysis-runs/:id/resume", async c => {
     const id = c.req.param("id"); if (!await owned(c, "run", id)) return missing(c);
@@ -116,12 +135,21 @@ export function analysisRoutes(now: () => number) {
     try {
       if (spec.manifest_json) await runValidityGuard(db, id, now()).run();
       else await processingWriteGuard(db, { teamId: spec.team_id, from: Date.parse(spec.from_ts), to: Date.parse(spec.to_ts), now: now() }).run();
-      const jobs = await db.prepare("SELECT job_key, generation FROM queue_jobs WHERE json_extract(job_json,'$.runId') = ? AND status = 'dead' AND error_code IN ('HANDLER_UNREGISTERED','UPSTREAM_UNAVAILABLE','HANDLER_FAILURE','ATTEMPTS_EXHAUSTED','DELIVERY_EXHAUSTED') AND generation < 3").bind(id).all<any>();
+      const jobs = await db.prepare("SELECT job_key, generation FROM queue_jobs WHERE json_extract(job_json,'$.runId') = ? AND status = 'dead' AND error_code IN ('HANDLER_UNREGISTERED','UPSTREAM_UNAVAILABLE','HANDLER_FAILURE','ATTEMPTS_EXHAUSTED','DELIVERY_EXHAUSTED','SOURCE_UNAVAILABLE','PROVIDER_RECEIPT_UNAVAILABLE','CONFIG_INVALID','PROVIDER_AUTH','PROVIDER_POLICY','RATE_LIMITED','PROVIDER_BILLING_BLOCKED') AND generation < 3").bind(id).all<any>();
       if (!jobs.results.length && await db.prepare("SELECT 1 FROM queue_jobs WHERE json_extract(job_json,'$.runId') = ? AND status = 'dead'").bind(id).first()) return apiError(c, "CONFLICT", "재개할 수 없는 작업입니다. 새 실행이 필요합니다.");
       await db.batch([...(spec.manifest_json ? [runValidityGuard(db, id, now())] : [processingWriteGuard(db, { teamId: spec.team_id, from: Date.parse(spec.from_ts), to: Date.parse(spec.to_ts), now: now() })]),
         ...jobs.results.map(job => db.prepare("INSERT INTO job_recoveries (job_key, generation, reason_ref, recorded_at) VALUES (?, ?, ?, ?)").bind(job.job_key, job.generation + 1, `run-resume:${id}`, now()))]);
     } catch { return apiError(c, "CONFLICT", "현재 입력이 무효이거나 재개 한도를 넘었습니다."); }
     return c.json(await response(c, (await loadSpec(db, id))!), 202);
+  });
+  routes.get("/analysis-runs/:id/artifacts", async c => {
+    const id = runIdSchema.safeParse(c.req.param("id")); if (!id.success) return apiError(c, "VALIDATION_ERROR", "요청 형식을 확인하세요.");
+    if (!await owned(c, "run", id.data)) return missing(c);
+    try { return c.json(await readRunArtifacts({ db: c.env.DB, now, tokenKey: c.env.SLACK_TOKEN_KEY, send }, id.data)); }
+    catch (error) {
+      if (error instanceof SourceUnavailable && error.code === "SLACK_UNAVAILABLE") return apiError(c, "SLACK_UNAVAILABLE", "Slack 원문을 재확인하지 못했습니다.", { retryable: error.retryable });
+      return apiError(c, "CONFLICT", "현재 근거를 검증할 수 없거나 분석이 완료되지 않았습니다.");
+    }
   });
   return routes;
 }

@@ -14,7 +14,9 @@ export const createAnalysisRunSchema = z.strictObject({ teamId: teamIdSchema, fr
 export const analysisStatuses = ["queued", "collecting", "evidence_extraction", "assessment", "review", "awaiting_professor", "finalized",
   "blocked_provider_billing", "failed_provider_auth", "rate_limited", "failed_model", "failed_data", "cancelled"] as const;
 export const analysisStatusSchema = z.enum(analysisStatuses);
-export const analysisErrorSchema = z.strictObject({ code: z.enum(["DATA_INVALIDATED", "SOURCE_UNAVAILABLE", "HANDLER_UNREGISTERED", "CONTEXT_LIMIT", "STAGE_INVALID", "PROVIDER_BILLING_BLOCKED", "PROVIDER_AUTH", "RATE_LIMITED", "MODEL_INVALID", "JOB_FAILED"]), retryable: z.boolean() });
+export const analysisErrorSchema = z.strictObject({ code: z.enum(["DATA_INVALIDATED", "SOURCE_UNAVAILABLE", "HANDLER_UNREGISTERED", "CONTEXT_LIMIT", "STAGE_INVALID", "PROVIDER_BILLING_BLOCKED", "PROVIDER_AUTH", "RATE_LIMITED", "MODEL_INVALID", "JOB_FAILED", "CONFIG_INVALID", "PROVIDER_POLICY", "PROVIDER_RECEIPT_UNAVAILABLE", "PROVIDER_OUTCOME_UNKNOWN", "UPSTREAM_UNAVAILABLE"]), retryable: z.boolean(),
+  retryAfterSeconds: z.number().nonnegative().optional(), billing: z.strictObject({ providerStatus: z.literal(402),
+    kind: z.enum(["insufficient_credits", "key_limit_exhausted", "in_flight_budget", "unspecified_provider_billing"]) }).optional() });
 export const analysisSnapshotSchema = z.strictObject({ contractVersion: z.literal(analysisContractVersion), rubric: rubricSelectionSchema,
   modelProfileVersion: z.literal("qwen-pilot-v1"), promptVersion: z.literal("communication-prompts-v1"),
   configuredModel: z.literal("qwen/qwen3.5-9b"), configuredProvider: z.literal("deepinfra/bf16"),

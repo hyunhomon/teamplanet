@@ -1,8 +1,8 @@
 import { assessmentInputSchema, correctionOutputSchema, reviewInputSchema, reviewOutputJsonSchema,
   validateAssessmentOutput, validateCorrectionOutput, validateReviewOutput } from "@teamplanet/contracts";
 import { sha256Hex } from "@teamplanet/collection";
-import { modelProfile, requestOpenRouter } from "@teamplanet/ai-core";
-import { EvidenceError, verifyEvidenceGeneration, type EvidenceModelDeps, type EvidenceReceipt } from "./evidence";
+import { modelProfile } from "@teamplanet/ai-core";
+import { EvidenceError, requestStage, verifyEvidenceGeneration, type EvidenceModelDeps, type EvidenceReceipt } from "./evidence";
 import { reviewerPromptVersion, reviewerSystemPrompt } from "./reviewer-prompt";
 export { reviewerPromptVersion, reviewerSystemPrompt } from "./reviewer-prompt";
 export type ReviewInput = ReturnType<typeof reviewInputSchema.parse>;
@@ -96,26 +96,11 @@ export async function reviewAssessment(deps: EvidenceModelDeps, value: unknown, 
   if (new TextEncoder().encode(data).length > 150000) throw new EvidenceError("CONTEXT_LIMIT");
   const current = async () => { try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); } };
   await current();
-  let response, retryAfter: number | undefined;
-  try {
-    response = await requestOpenRouter(deps.apiKey, deps.modelId, [{ role: "system", content: reviewerSystemPrompt }, { role: "user", content: data }], async (url, init) => {
-      const result = await (deps.fetcher ?? fetch)(url, { ...init, redirect: "error", signal: AbortSignal.timeout(120000) });
-      const delay = result.headers.get("Retry-After"); if (delay && /^\d+$/.test(delay)) retryAfter = Number(delay);
-      return result;
-    }, { responseFormat: { type: "json_schema", json_schema: { name: "teamplanet_review_v1", strict: true, schema: reviewOutputJsonSchema } } });
-  } catch { throw new EvidenceError("UPSTREAM_UNAVAILABLE", true); }
-  if (!response.ok) {
-    if ("kind" in response.error) throw new EvidenceError("PROVIDER_BILLING_BLOCKED", response.error.retryable, response.error, undefined, response.error.retryAfterSeconds);
-    const status = response.error.providerStatus;
-    throw new EvidenceError(status === 401 ? "PROVIDER_AUTH" : status === 403 ? "PROVIDER_POLICY" : status === 429 ? "RATE_LIMITED" : "UPSTREAM_UNAVAILABLE",
-      status === 429 || status >= 500 || status === 200, undefined, undefined, retryAfter);
-  }
-  const body = response.data as any, choice = body?.choices?.[0];
-  if (body?.model !== deps.modelId || !/^gen-[A-Za-z0-9_-]{1,150}$/.test(body?.id ?? "")) throw new EvidenceError("PROVIDER_POLICY");
-  if (choice?.finish_reason === "length") throw new EvidenceError("CONTEXT_LIMIT");
-  if (body.choices?.length !== 1 || choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string" || choice.message.content.length > 1048576) invalid();
-  let raw: unknown; try { raw = JSON.parse(choice.message.content); } catch { return invalid(); }
-  const review = checkedReview(raw, input), receipt = await verifyEvidenceGeneration(deps, body.id, deps.modelId);
+  const { generationId, content } = await requestStage(deps, [{ role: "system", content: reviewerSystemPrompt }, { role: "user", content: data }], "teamplanet_review_v1", reviewOutputJsonSchema);
+  let raw: unknown; try { raw = JSON.parse(content); } catch { return invalid(); }
+  const review = checkedReview(raw, input);
+  if (deps.onValidated) { await current(); await deps.onValidated({ runId: input.runId, iteration: input.iteration, review }, generationId); }
+  const receipt = await verifyEvidenceGeneration(deps, generationId, deps.modelId);
   await current();
   return { runId: input.runId, iteration: input.iteration, review, receipt };
 }

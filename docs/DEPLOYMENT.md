@@ -155,4 +155,12 @@ OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니
 OTP 요청의 202는 요청 접수만 뜻합니다. 공급자 전송은 Worker waitUntil에서 실행하며 실패 시 auth.email_delivery_failed 고정 코드로 기록하고 코드를 사용할 수 없게 합니다. 등록 여부 노출 방지를 위해 개별 전송 실패도 동일한 접수 응답과 재요청 제한을 유지합니다. 운영자가 실제 수신·메일 제공자 기록을 확인해야 전달 성공으로 판단합니다. OTP나 이메일·공급자 본문을 로그에 남기지 않습니다.
 # 데이터 보관 정리
 
+## 분석 Consumer 설정 (#20)
+
+`teamplanet-consumer`는 실제 분석 stage를 처리한다. 기존 API와 동일한 `SLACK_TOKEN_KEY` 및 Consumer 자신의 `OPENROUTER_API_KEY` secret이 필요하다. API Worker에만 저장한 키는 공유되지 않는다. 승인된 모델 ID 세 슬롯은 Consumer wrangler vars로 배포한다. Consumer의 키/슬롯이 없거나 snapshot과 다르면 CONFIG_INVALID/failed_provider_auth이며 분석 완료를 표시하지 않는다. 실제 키 등록 여부·유료 모델 호출은 이번 합성 검증으로 확인한 것이 아니다. 운영자가 secret 입력 시 값을 저장소·이슈·로그에 남기지 않는다.
+
+분석 공개 엔드포인트나 preview 환경을 만들지 않으며 기존 GitHub production CD를 유지한다. 로컬 Wrangler OAuth 계정과 GitHub CD 자격 증명은 독립적이다. 분석 source 검증·중단/복구·정규화 출력 API는 [ANALYSIS_PIPELINE](ANALYSIS_PIPELINE.md)을 따른다. CI의 `queue:verify:local`은 실제 로컬 Worker/Queue/D1에 외부 전달 불가능한 mock을 연결해 A/B/C와 receipt-only retry를 검사한다.
+
+배포 명령 마지막의 `analysis-secret-status.ts`는 CD에 이미 제공된 production 토큰으로 Consumer secret 이름만 조회하고 GitHub 실행 Summary에 남긴다. 값이나 실제 공급자 권한을 조회하지 않는다. 미등록과 조회 실패를 구분하며, 일반 웹 배포 성공을 실제 모델 연결 검증으로 대신하지 않는다. PR CI에는 이 토큰이나 새 쓰기 권한을 주지 않는다.
+
 Consumer의 기존 매분 cron은 outbox와 별도로 수업 종료 후 UTC 달력 3개월 만료 및 조기 삭제 요청을 처리한다. 실패·재시도와 `ERASURE_FAILED` 운영 경로는 [DATA_LIFECYCLE.md](DATA_LIFECYCLE.md)를 따른다. production 단일 환경과 내부 API service binding은 유지한다.

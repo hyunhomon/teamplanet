@@ -99,6 +99,11 @@ describe("requestOpenRouter", () => {
 });
 
 describe("parseOpenRouter402", () => {
+  test("unknown provider metadata and overflowing retry hints do not escape normalized billing errors", () => {
+    expect(parseOpenRouter402(402, { error: { metadata: { limit_source: "private source text" } } })).toMatchObject({ source: undefined, kind: "unspecified_provider_billing", retryable: false });
+    const overflow = parseOpenRouter402(402, { error: { metadata: { limit_source: "openrouter_in_flight_budget" } } }, "9".repeat(400));
+    expect(overflow?.retryAfterSeconds).toBeUndefined(); expect(overflow?.retryable).toBe(false);
+  });
   test.each([
     ["openrouter_credits", "insufficient_credits"],
     ["openrouter_key_limit", "key_limit_exhausted"],

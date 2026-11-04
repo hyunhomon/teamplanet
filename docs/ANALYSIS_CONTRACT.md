@@ -1,5 +1,7 @@
 # 분석 실행·단계 계약 v1 (#16)
 
+#20에서 실제 A/B/C handler·정규화 결과·공급자 오류/복구를 연결했다. 현재 동작과 신규 artifacts API는 [ANALYSIS_PIPELINE](ANALYSIS_PIPELINE.md)을 따른다. 아래는 #16의 기반 계약이며 당시 후속 작업으로 표시한 B/C adapter도 #18/#19에서 구현됐다.
+
 지훈 선배(#18 B)·민지 선배(#19 C)는 `@teamplanet/contracts`와 **`@teamplanet/contracts/analysis-fixtures`**를 사용한다. 실제 모델 호출 없이 `tests/analysis-contracts.test.ts`의 A/B/C·수정 요구/응답·실패 fixture를 실행할 수 있다. 공유 schema는 `packages/contracts/src/analysis.ts`, fixture는 `packages/contracts/src/analysis-fixtures.ts`다. #17은 A adapter, #18/#19는 B/C adapter, #20은 전체 실행/결과 저장/오류 재시도 연결이다. 이 PR은 B/C나 통합 실행을 제공하지 않는다.
 
 ## 고정 버전과 범위

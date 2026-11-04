@@ -37,6 +37,7 @@ export default function AnalysisDashboard({ professorId, onSignedOut }: { profes
   }, [state.teamId, state.run?.id, state.stale, state.busy]);
   const waiting = Math.max(0, Math.ceil((state.retryAt - now) / 1000)), disabled = state.busy || waiting > 0;
   const team = state.teams.find(t => t.team.id === state.teamId), run = state.run;
+  const cannotResume = run?.errors.some(error => ["PROVIDER_OUTCOME_UNKNOWN", "MODEL_INVALID", "CONTEXT_LIMIT", "STAGE_INVALID"].includes(error.code));
   const preview = state.preview, fresh = preview && now - Date.parse(preview.checkedAt) <= 60000;
   const editPeriod = (nextFrom: string, nextTo: string) => {
     setFrom(nextFrom); setTo(nextTo); setInputError("");
@@ -96,12 +97,15 @@ export default function AnalysisDashboard({ professorId, onSignedOut }: { profes
         {run.status === "rate_limited" && <p className="form-notice">공급자 요청 속도 제한입니다. 서버의 재시도 예약을 기다린 뒤 최신 상태를 확인하세요.</p>}
         {run.status === "failed_model" && <p className="form-error">모델의 출력 형식·문맥 한도 또는 공급자 처리 오류입니다. 운영자가 원인을 확인한 뒤 재개 가능 여부를 확인하세요.</p>}
         {run.status === "failed_data" && <p className="form-error">원문 변경·동의 철회·삭제 또는 접근 불가로 이 실행을 사용할 수 없습니다. 원인을 확인한 뒤 새 버전이 필요합니다.</p>}
+        {run.errors.some(error => error.code === "PROVIDER_OUTCOME_UNKNOWN") && <p className="form-error">외부 모델 요청의 처리 결과를 확인할 수 없어 자동 재전송을 중지했습니다. 운영자가 공급자 기록을 확인한 뒤 새 분석 여부를 결정해야 합니다.</p>}
+        {run.errors.some(error => error.code === "CONFIG_INVALID") && <p className="form-error">분석 Worker의 모델·API 키 설정을 확인해야 합니다. 운영자에게 요청하세요.</p>}
+        {run.errors.some(error => error.code === "PROVIDER_RECEIPT_UNAVAILABLE") && <p className="form-notice">모델 결과는 보존됐으며 실제 공급자 확인만 재시도합니다. 같은 모델 요청을 다시 보내지 않습니다.</p>}
         {run.errors.some(e => e.code === "HANDLER_UNREGISTERED") && <p className="form-notice">분석 서비스를 준비 중입니다. 운영자에게 재개 가능 여부를 확인하세요.</p>}
         {run.errors.filter(e => e.code !== "HANDLER_UNREGISTERED").map((e, i) => <p className="field-help" key={`${e.code}:${i}`}>{e.code === "DATA_INVALIDATED" ? "입력이 무효화됐습니다." : e.code === "CONTEXT_LIMIT" ? "모델 문맥의 기술적 한도를 확인하세요." : e.code === "SOURCE_UNAVAILABLE" ? "Slack 원문에 접근할 수 없습니다." : "서버에서 처리 오류를 기록했습니다."} {e.retryable ? "서버 재시도 예정입니다." : "운영자 확인이 필요합니다."}</p>)}
         {run.status === "awaiting_professor" && <p className="form-notice">분석이 교수 검토 단계에 도달했습니다. 최종 평가 전 원문 근거와 한계에 대한 교수 검토가 필요합니다.</p>}
         <div className="analysis-actions"><button className="button secondary" disabled={disabled} onClick={() => void controller.poll()}>실행 상태 확인</button>
           {!["awaiting_professor", "finalized", "cancelled"].includes(run.status) && <button className="button secondary" disabled={disabled || state.stale} onClick={() => void controller.action("cancel")}>실행 취소</button>}
-          {!["awaiting_professor", "finalized", "cancelled", "failed_data"].includes(run.status) && !runningStatuses.has(run.status) && <button className="button secondary" disabled={disabled || state.stale} onClick={() => void controller.action("resume")}>재개 가능 여부 확인</button>}
+          {!["awaiting_professor", "finalized", "cancelled", "failed_data"].includes(run.status) && !runningStatuses.has(run.status) && !cannotResume && <button className="button secondary" disabled={disabled || state.stale} onClick={() => void controller.action("resume")}>재개 가능 여부 확인</button>}
           {run.errors.some(e => e.code === "HANDLER_UNREGISTERED") && <button className="button secondary" disabled={disabled || state.stale} onClick={() => void controller.action("resume")}>처리 연결 후 재개</button>}
           {!runningStatuses.has(run.status) && <button className="button secondary" disabled={disabled || state.stale} onClick={() => controller.newVersion()}>새 분석 버전 준비</button>}</div>
         <p className="field-help">새 버전은 기존 실행을 덮어쓰지 않습니다. 분석 후보는 교수의 최종 확정이 아닙니다.</p>

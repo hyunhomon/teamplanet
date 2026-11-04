@@ -4,7 +4,9 @@ import { JobStore, LeaseLost } from "./store";
 import { forwardDead } from "./producer";
 
 export type JobErrorCode = "HANDLER_UNREGISTERED" | "REFERENCE_NOT_FOUND" | "DATA_INVALID" | "UPSTREAM_UNAVAILABLE" |
-  "RATE_LIMITED" | "PROVIDER_BILLING_BLOCKED" | "HANDLER_FAILURE";
+  "RATE_LIMITED" | "PROVIDER_BILLING_BLOCKED" | "HANDLER_FAILURE" | "DATA_INVALIDATED" | "SOURCE_UNAVAILABLE" |
+  "PROVIDER_AUTH" | "PROVIDER_POLICY" | "PROVIDER_RECEIPT_UNAVAILABLE" | "CONFIG_INVALID" |
+  "MODEL_INVALID" | "CONTEXT_LIMIT" | "PROVIDER_OUTCOME_UNKNOWN" | "STAGE_INVALID";
 export class JobError extends Error {
   constructor(readonly code: JobErrorCode, readonly retryable: boolean, readonly retryAfterSeconds?: number) { super(code); }
 }

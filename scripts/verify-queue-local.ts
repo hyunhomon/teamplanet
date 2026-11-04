@@ -5,6 +5,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { convertV4MiniflareOptions, Miniflare, type V4MiniflareOptions } from "miniflare";
 import { jobKey, type QueueEnvelope, type QueueJob } from "../packages/contracts/src/jobs";
+import { flushOutbox, JobStore } from "../packages/queue/src/index";
+import { localEgress, localModelBindings, localPaidCalls, localProviderFetch, localReceiptCalls, localRunId, seedLocalAnalysis } from "../tests/fixtures/analysis-queue";
+import type { D1Database, Queue } from "@cloudflare/workers-types";
 
 const root = resolve(import.meta.dir, "..");
 const cache = join(root, "node_modules/.cache");
@@ -18,7 +21,7 @@ if (!process.env.TEAMPLANET_QUEUE_NODE_RUNNER) {
   if (!compiled.success) throw new Error(`Local queue bundle failed: ${compiled.logs.join("\n")}`);
   // Bun 1.3.14 on Windows can panic after Miniflare.dispose(), even after all assertions pass.
   // Keep Bun for the pinned build; run the actual simulator lifecycle under required Node 24.
-  const runner = await Bun.build({ entrypoints: [import.meta.path], target: "node", format: "esm", packages: "external",
+  const runner = await Bun.build({ entrypoints: [import.meta.path], target: "node", format: "esm", external: ["miniflare", "drizzle-orm/migrator", "zod"],
     outdir: join(runDir, "runner"), define: { "import.meta.dir": JSON.stringify(import.meta.dir) } });
   if (!runner.success) throw new Error(`Local queue runner build failed: ${runner.logs.join("\n")}`);
   const child = Bun.spawn(["node", runner.outputs[0]!.path], { stdin: "ignore", stdout: "inherit", stderr: "inherit",
@@ -34,6 +37,7 @@ const options = {
     { name: "local-producer", modules: true, scriptPath: join(runDir, "tests/fixtures/queue-producer.js"), compatibilityDate: consumerConfig.compatibility_date,
       d1Databases, queueProducers: { WORK_QUEUE: source.queue } },
     { name: consumerConfig.name, modules: true, scriptPath: join(runDir, "tests/fixtures/queue-consumer.js"), compatibilityDate: consumerConfig.compatibility_date,
+      bindings: localModelBindings, outboundService: localProviderFetch,
       d1Databases, queueProducers: { WORK_QUEUE: source.queue, DEAD_LETTER_QUEUE: source.dead_letter_queue },
       queueConsumers: { [source.queue]: {
         maxBatchSize: source.max_batch_size, maxBatchTimeout: source.max_batch_timeout,
@@ -65,7 +69,12 @@ try {
   const waitFor = async (label: string, predicate: () => Promise<boolean>) => {
     const deadline = Date.now() + 90_000;
     while (!await predicate()) {
-      if (Date.now() > deadline) throw new Error(`Local queue timeout: ${label}`);
+      if (Date.now() > deadline) {
+        console.error(JSON.stringify({ label, runs: (await db.prepare("SELECT id,status,stage_metadata_json FROM analysis_runs").all()).results,
+          jobs: (await db.prepare("SELECT job_key,status,attempts,error_code FROM queue_jobs").all()).results,
+          calls: (await db.prepare("SELECT stage,status,generation_id,error_code FROM analysis_calls").all()).results, paid: localPaidCalls, receipts: localReceiptCalls }));
+        throw new Error(`Local queue timeout: ${label}`);
+      }
       await sleep(100);
     }
     console.log(`PASS: ${label}`);
@@ -78,11 +87,27 @@ try {
     (await db.prepare("SELECT count(*) AS count FROM synthetic_deliveries WHERE job_key = ?").bind(key).first<{ count: number }>())!.count >= 2);
   deepStrictEqual(await db.prepare("SELECT attempts FROM queue_jobs WHERE job_key = ?").bind(key).first(), { attempts: 1 });
   deepStrictEqual(await db.prepare("SELECT count(*) AS count FROM job_checkpoints WHERE job_key = ?").bind(key).first(), { count: 2 });
-  const unregistered: QueueJob = { kind: "analysis.stage", runId: `run_${crypto.randomUUID()}`, stage: "review", chunkId: "synthetic-1" };
-  await harness.fetch("http://localhost/probe", { method: "POST", body: JSON.stringify(unregistered) });
-  await waitFor("unregistered handler reaches application DLQ", async () =>
+  const missingRun: QueueJob = { kind: "analysis.stage", runId: `run_${crypto.randomUUID()}`, stage: "review", chunkId: "run_0" };
+  await harness.fetch("http://localhost/probe", { method: "POST", body: JSON.stringify(missingRun) });
+  await waitFor("a nonexistent analysis run reaches application DLQ without model access", async () =>
     (await db.prepare("SELECT count(*) AS count FROM synthetic_dlq").first<{ count: number }>())!.count >= 1);
-  strictEqual((await db.prepare("SELECT status FROM queue_jobs WHERE job_key = ?").bind(jobKey(unregistered)).first<{ status: string }>())!.status, "dead");
+  deepStrictEqual(await db.prepare("SELECT status,error_code FROM queue_jobs WHERE job_key = ?").bind(jobKey(missingRun)).first(), { status: "dead", error_code: "DATA_INVALIDATED" });
+  // Full production handler, actual local Queue/D1, and an egress mock which cannot reach real services.
+  await seedLocalAnalysis(db as unknown as D1Database);
+  await harness.fetch("http://localhost/probe", { method: "POST", body: JSON.stringify({ kind: "analysis.prepare", runId: localRunId }) });
+  const store = new JobStore(db as unknown as D1Database), deadQueue = await mf.getQueueProducer<QueueEnvelope>("DEAD_LETTER_QUEUE", consumerConfig.name);
+  await waitFor("actual Queue/D1 A -> B -> C with metadata-only retry reaches professor review", async () => {
+    await flushOutbox(store, producer as unknown as Queue<QueueEnvelope>, deadQueue as unknown as Queue<QueueEnvelope>);
+    const state = await db.prepare("SELECT status,stage_metadata_json FROM analysis_runs WHERE id = ?").bind(localRunId).first<{ status: string; stage_metadata_json: string | null }>();
+    const jobs = await db.prepare("SELECT status,error_code FROM queue_jobs WHERE json_extract(job_json,'$.runId') = ?").bind(localRunId).all();
+    if (jobs.results.some(row => row.status === "dead")) throw new Error(`Local analysis failed: ${JSON.stringify({ state, jobs: jobs.results, paid: localPaidCalls, receipts: localReceiptCalls, egress: localEgress })}`);
+    return state?.status === "awaiting_professor";
+  });
+  deepStrictEqual(localPaidCalls, ["teamplanet_evidence_v1", "teamplanet_assessment_v1", "teamplanet_review_v1"]);
+  strictEqual(localReceiptCalls.filter(id => id === "gen-local-1").length, 2);
+  strictEqual((await db.prepare("SELECT count(*) AS count FROM assessments WHERE run_id = ?").bind(localRunId).first<{ count: number }>())!.count, 1);
+  const output = (await db.prepare("SELECT output_json FROM analysis_outputs WHERE run_id = ?").bind(localRunId).first<{ output_json: string }>())!.output_json;
+  strictEqual(output.includes("합성 큐 모델 통합 자료"), false); strictEqual(output.includes("synthetic-only-key"), false);
   // Deliberately bypass the validated producer to verify platform max_retries -> native DLQ.
   const invalidProducer = await mf.getQueueProducer<unknown>("WORK_QUEUE", "local-producer");
   await invalidProducer.send({ version: 999, kind: "synthetic.unknown" });

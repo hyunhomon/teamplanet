@@ -34,13 +34,14 @@ export function parseOpenRouter402(
   const obj = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
   const err = typeof obj.error === "object" && obj.error !== null ? obj.error as Record<string, unknown> : {};
   const metadata = typeof err.metadata === "object" && err.metadata !== null ? err.metadata as Record<string, unknown> : {};
-  const source = typeof metadata.limit_source === "string" ? metadata.limit_source : undefined;
+  const source = ["openrouter_credits", "openrouter_key_limit", "openrouter_in_flight_budget"].includes(String(metadata.limit_source)) ? String(metadata.limit_source) : undefined;
   const kind = source === "openrouter_credits" ? "insufficient_credits"
     : source === "openrouter_key_limit" ? "key_limit_exhausted"
     : source === "openrouter_in_flight_budget" ? "in_flight_budget"
     : "unspecified_provider_billing";
   // OpenRouter in-flight spending 402 can have Retry-After. Treat as transient only when explicit.
-  const seconds = retryAfterHeader && /^\d+$/.test(retryAfterHeader.trim()) ? Number(retryAfterHeader) : undefined;
+  const candidate = retryAfterHeader && /^\d+$/.test(retryAfterHeader.trim()) ? Number(retryAfterHeader) : undefined;
+  const seconds = candidate !== undefined && Number.isSafeInteger(candidate) ? candidate : undefined;
   return {
     code: "OPENROUTER_BILLING_BLOCKED", providerStatus: 402, kind, source,
     retryable: kind === "in_flight_budget" && seconds !== undefined,
@@ -53,7 +54,7 @@ export async function requestOpenRouter(
   apiKey: string,
   model: string,
   messages: Array<Record<string, unknown>>,
-  fetcher: (url: string, init: RequestInit) => Promise<Response> = fetch,
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = (url, init) => fetch(url, init),
   options: { responseFormat?: Record<string, unknown> } = {},
 ) {
   const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {

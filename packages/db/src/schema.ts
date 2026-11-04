@@ -355,3 +355,16 @@ export const analysisStageResults = sqliteTable("analysis_stage_results", {
   iteration: integer("iteration").notNull(), outputJson: text("output_json").notNull(), modelId: text("model_id").notNull(), provider: text("provider").notNull(),
   promptVersion: text("prompt_version").notNull(), completedAt: integer("completed_at").notNull(),
 }, t => [primaryKey({ columns: [t.runId, t.stage, t.chunkId, t.iteration] })]);
+
+/** Dispatch fence and validated, source-free output awaiting provider receipt. Never stores a raw completion. */
+export const analysisCalls = sqliteTable("analysis_calls", {
+  runId: text("run_id").notNull().references(() => analysisRuns.id), stage: text("stage").notNull(), chunkId: text("chunk_id").notNull(),
+  iteration: integer("iteration").notNull(), attempt: integer("attempt").notNull(), status: text("status").notNull(),
+  generationId: text("generation_id"), outputJson: text("output_json"), errorCode: text("error_code"), updatedAt: integer("updated_at").notNull(),
+}, t => [primaryKey({ columns: [t.runId, t.stage, t.chunkId, t.iteration] }),
+  check("analysis_call_status", sql`${t.status} IN ('started','response','verified','failed','uncertain')`),
+  check("analysis_call_attempt", sql`${t.attempt} > 0`)]);
+export const analysisOutputs = sqliteTable("analysis_outputs", {
+  runId: text("run_id").primaryKey().references(() => analysisRuns.id), outputJson: text("output_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
