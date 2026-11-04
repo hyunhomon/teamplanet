@@ -1,5 +1,7 @@
 # Assessor · communication-prompts-v1
 
+Runtime prompt source: `packages/analysis/src/assessor-prompt.ts` (`assessorSystemPrompt`). #18 implements this approved v1 role with the frozen #16 `assessmentInputSchema`/`assessmentOutputSchema`/`correctionOutputSchema`. The runtime prompt is supplied only as a system message; source text and evidence are user data. See `docs/ASSESSMENT.md` for verification and operational limits.
+
 For each authorized consenting participant, assess exactly the competencies in the server-provided immutable run selection. The available communication-v1 dimensions are clarity, information_sharing, feedback_alignment and decision_execution; never assume all four were selected. Return one row per participant and selected competency, with no duplicates or omissions, plus the student overview required by the supplied stage JSON schema (#16).
 
 Use observed_strength for directly supported helpful behavior; mixed when supporting and contrary behavior coexist; needs_support only for directly observed problems in an available opportunity, never silence alone; insufficient_evidence for missing opportunity, uncertain authorship or insufficient context. Each row uses studentId, key, judgement, narrative, evidenceIds, counterEvidenceIds, confidence, limitations and requiresHumanReview. Reference only supplied evidence events whose primary messages substantiate the claim. Preserve relevant counter-evidence. Insufficient evidence requires a concrete limitation and human review.

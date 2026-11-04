@@ -139,25 +139,29 @@ export async function withChunkInput<T>(deps: ImageDeps, runId: string, chunkId:
   const planRow = await db.prepare("SELECT plan_json FROM analysis_chunks WHERE run_id = ? AND id = ?").bind(runId, chunkId).first<{ plan_json: string }>();
   if (!planRow) throw new Error("CHUNK_NOT_FOUND");
   const plan = chunkPlanSchema.parse(JSON.parse(planRow.plan_json));
-  const wanted = [...plan.context, ...plan.parts], ids = [...new Set(wanted.map(p => p.messageId))];
+  return withSourceParts(deps, spec, [...plan.context, ...plan.parts], async (parts, assertCurrent) => {
+    const input = evidenceInputSchema.parse({ version: "analysis-stages-v1", runId, chunkId, selection: JSON.parse(spec.snapshot_json).rubric,
+      students: JSON.parse(spec.students_json), parts, primaryPartIds: plan.parts.map(p => p.id), limitations: [...JSON.parse(spec.manifest_json!).limitations, ...plan.limitations],
+      period: { from: spec.from_ts, to: spec.to_ts, timezone: spec.timezone } });
+    try { await assertCurrent(); return await use(input, assertCurrent); }
+    finally { for (const p of input.parts) { p.text = ""; for (const image of p.images) image.dataUrl = ""; } }
+  });
+}
+/** Restores the given parts of a prepared run from current Slack in memory (A: one chunk, B: the cited messages). */
+export async function withSourceParts<T>(deps: ImageDeps, spec: Spec, wanted: readonly Part[], use: (parts: EvidenceInput["parts"], assertCurrent: () => Promise<void>) => Promise<T>): Promise<T> {
+  const db = deps.db, runId = spec.run_id, ids = [...new Set(wanted.map(p => p.messageId))];
   const parts: EvidenceInput["parts"] = [], checks: (() => Promise<void>)[] = [];
   const assertCurrent = async () => { await runValidityGuard(db, runId, deps.now()).run(); for (const check of checks) await check(); };
   async function load(index: number): Promise<T> {
     await runValidityGuard(db, runId, deps.now()).run();
-    if (index === ids.length) {
-      const input = evidenceInputSchema.parse({ version: "analysis-stages-v1", runId, chunkId, selection: JSON.parse(spec!.snapshot_json).rubric,
-        students: JSON.parse(spec!.students_json), parts, primaryPartIds: plan.parts.map(p => p.id), limitations: [...JSON.parse(spec!.manifest_json!).limitations, ...plan.limitations],
-        period: { from: spec!.from_ts, to: spec!.to_ts, timezone: spec!.timezone } });
-      try { await assertCurrent(); return await use(input, assertCurrent); }
-      finally { for (const p of input.parts) { p.text = ""; for (const image of p.images) image.dataUrl = ""; } }
-    }
+    if (index === ids.length) return use(parts, assertCurrent);
     const row = await db.prepare("SELECT * FROM analysis_sources WHERE run_id = ? AND id = ?").bind(runId, ids[index]!).first<Source>();
     if (!row) throw new Error("SOURCE_UNAVAILABLE");
     const requestedFiles = (JSON.parse(row.attachments_json) as any[]).filter(a => wanted.some(p => p.messageId === row.id && p.imageIds.includes(a.id))).map(a => a.fileId);
-    return withMessageImages({ ...deps, requestedFileIds: requestedFiles }, { teamId: spec!.team_id, channelId: row.channel_id, slackTs: row.slack_ts }, async memory => {
+    return withMessageImages({ ...deps, requestedFileIds: requestedFiles }, { teamId: spec.team_id, channelId: row.channel_id, slackTs: row.slack_ts }, async memory => {
       const ref: SourceRef = JSON.parse(row.ref_json);
       const attachments: any[] = JSON.parse(row.attachments_json);
-      const invalid = async (): Promise<never> => { await invalidateTeam(db, spec!.team_id, "manifest_changed", deps.now()).run(); throw new Error("DATA_INVALIDATED"); };
+      const invalid = async (): Promise<never> => { await invalidateTeam(db, spec.team_id, "manifest_changed", deps.now()).run(); throw new Error("DATA_INVALIDATED"); };
       if (JSON.stringify(ref) !== JSON.stringify(memory.source.ref) || attachments.map(a => a.fileId).sort().join() !== memory.attachmentIds.join()) return invalid();
       for (const attachment of attachments) {
         const current = await db.prepare("SELECT file_revision, content_hash, limitation FROM image_refs WHERE channel_id = ? AND slack_ts = ? AND file_id = ?").bind(row.channel_id, row.slack_ts, attachment.fileId).first<any>();
@@ -165,7 +169,7 @@ export async function withChunkInput<T>(deps: ImageDeps, runId: string, chunkId:
       }
       checks.push(async () => {
         await memory.assertCurrent();
-        if (requestedFiles.length) await withMessageImages({ ...deps, requestedFileIds: requestedFiles }, { teamId: spec!.team_id, channelId: row.channel_id, slackTs: row.slack_ts }, async () => {
+        if (requestedFiles.length) await withMessageImages({ ...deps, requestedFileIds: requestedFiles }, { teamId: spec.team_id, channelId: row.channel_id, slackTs: row.slack_ts }, async () => {
           for (const attachment of attachments.filter(a => requestedFiles.includes(a.fileId))) {
             const current = await db.prepare("SELECT file_revision, content_hash, limitation FROM image_refs WHERE channel_id = ? AND slack_ts = ? AND file_id = ?").bind(row.channel_id, row.slack_ts, attachment.fileId).first<any>();
             if (!current || current.file_revision !== attachment.fileRevision || current.content_hash !== attachment.hash || current.limitation !== attachment.limitation) return invalid();
