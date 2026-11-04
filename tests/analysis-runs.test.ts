@@ -48,7 +48,7 @@ test("owner, timezone, actual course period, incomplete settings/coverage and tr
   expect((await call("/analysis-runs", request())).status).toBe(409);
   expect(f.sqlite.query("SELECT * FROM analysis_runs").all()).toEqual([]); expect(f.sqlite.query("SELECT * FROM analysis_specs").all()).toEqual([]);
 });
-test("prepare stores references only, restores chunk input in memory and never marks an unregistered model handler complete", async () => {
+test("prepare stores references only, restores chunk input in memory and never fabricates success without model configuration", async () => {
   const run = await create(); await prepareRun(deps(), run.id, await context(run.id));
   const state = analysisRunResponseSchema.parse(await (await call(`/analysis-runs/${run.id}`)).json());
   expect(state.status).toBe("evidence_extraction"); expect(state.valid).toBe(true); expect(state.manifest?.sourceCount).toBe(1); expect(state.manifest?.chunkCount).toBe(1);
@@ -60,7 +60,7 @@ test("prepare stores references only, restores chunk input in memory and never m
   const envelope: QueueEnvelope = { version: 1, generation: 0, job: { kind: "analysis.stage", runId: run.id, stage: "evidence_extraction", chunkId: "chunk_0" } };
   await consumeMessage({ id: "synthetic", body: envelope, attempts: 1, ack() {}, retry() {} }, new JobStore(f.db, () => clock), { send: async () => {} } as any, createHandlers(f.db, () => clock));
   const waiting = analysisRunResponseSchema.parse(await (await call(`/analysis-runs/${run.id}`)).json());
-  expect(waiting.errors.some(e => e.code === "HANDLER_UNREGISTERED")).toBe(true); expect(waiting.progress.completedChunks).toBe(0);
+  expect(waiting.errors.some(e => e.code === "CONFIG_INVALID")).toBe(true); expect(waiting.status).toBe("failed_provider_auth"); expect(waiting.progress.completedChunks).toBe(0);
   expect((await call(`/analysis-runs/${run.id}/resume`, {})).status).toBe(202);
 });
 test("server interruption preserves checkpoints; restart cannot promote a withdrawn or cancelled run", async () => {

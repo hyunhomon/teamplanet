@@ -6,6 +6,11 @@
   "compatibility_date": "2026-10-24",
   "workers_dev": false,
   "preview_urls": false,
+  "vars": {
+    "OPENROUTER_MODEL_EVIDENCE": "qwen/qwen3.5-9b",
+    "OPENROUTER_MODEL_ASSESSOR": "qwen/qwen3.5-9b",
+    "OPENROUTER_MODEL_REVIEWER": "qwen/qwen3.5-9b"
+  },
   "d1_databases": [{
     "binding": "DB", "database_name": "teamplanet-production",
     "database_id": "086fd3c2-d33b-4fc2-9a6c-91df7305c8b9", "migrations_dir": "../../packages/db/migrations"

@@ -8,12 +8,17 @@ import { evidencePromptVersion, evidenceSystemPrompt } from "./evidence-prompt";
 export { evidencePromptVersion, evidenceSystemPrompt } from "./evidence-prompt";
 export class EvidenceError extends Error {
   constructor(readonly code: "CONFIG_INVALID" | "CONTEXT_LIMIT" | "MODEL_INVALID" | "PROVIDER_AUTH" | "PROVIDER_POLICY" | "PROVIDER_RECEIPT_UNAVAILABLE" | "RATE_LIMITED" | "UPSTREAM_UNAVAILABLE" | "PROVIDER_BILLING_BLOCKED" | "DATA_INVALIDATED",
-    readonly retryable = false, readonly billing?: BillingBlock, readonly generationId?: string, readonly retryAfterSeconds?: number) { super(code); }
+    readonly retryable = false, readonly billing?: BillingBlock, readonly generationId?: string, readonly retryAfterSeconds?: number,
+    readonly outcomeUnknown = false) { super(code); }
 }
 export type EvidenceReceipt = { generationId: string; model: string; provider: "DeepInfra"; requestedProvider: "deepinfra/bf16"; promptVersion: typeof evidencePromptVersion };
 export type EvidenceChunkResult = { runId: string; chunkId: string; processedPartIds: string[]; events: NormalizedEvidence[]; limitations: string[];
   missingImageIds: string[]; receipt: EvidenceReceipt };
-export type EvidenceModelDeps = { apiKey: string; modelId: string; fetcher?: (url: string, init: RequestInit) => Promise<Response> };
+export type EvidenceModelDeps = {
+  apiKey: string; modelId: string; fetcher?: (url: string, init: RequestInit) => Promise<Response>;
+  beforeRequest?: () => Promise<void>;
+  onValidated?: (output: unknown, generationId: string) => Promise<void>;
+};
 const distinct = (values: string[]) => [...new Set(values)].sort();
 const inference = /성격|내향적|외향적|게으|무능|속마음|의도(?:가|는|를)|동기(?:가|는|를)|성별|인종|종교|장애인|우울증|성적|낙제|발언량|메시지\s*(?:수|개수)|발언\s*횟수|\b(?:lazy|introvert|extrovert|personality|grade|motivation|IQ)\b/i;
 /** `support` adds already verified text (B: A summaries) to the action-word check only, never to the source-copy check. */
@@ -58,9 +63,11 @@ function modelMessages(input: EvidenceInput) {
 export async function verifyEvidenceGeneration(deps: EvidenceModelDeps, generationId: string, expectedModel: string): Promise<EvidenceReceipt> {
   if (!/^gen-[A-Za-z0-9_-]{1,150}$/.test(generationId)) throw new EvidenceError("MODEL_INVALID");
   let response: Response;
-  try { response = await (deps.fetcher ?? fetch)(`https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(generationId)}`, {
-    method: "GET", headers: { Authorization: `Bearer ${deps.apiKey}` }, redirect: "error", signal: AbortSignal.timeout(15000) }); }
+  const send = deps.fetcher ?? ((url: string, init: RequestInit) => fetch(url, init));
+  try { response = await send(`https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(generationId)}`, {
+    method: "GET", headers: { Authorization: `Bearer ${deps.apiKey}` }, redirect: "manual", signal: AbortSignal.timeout(15000) }); }
   catch { throw new EvidenceError("PROVIDER_RECEIPT_UNAVAILABLE", true, undefined, generationId); }
+  if (response.status >= 300 && response.status < 400) { await response.body?.cancel(); throw new EvidenceError("PROVIDER_POLICY", false, undefined, generationId); }
   const body: any = response.ok ? await response.json().catch(() => null) : null;
   if (!body?.data || body.data.id !== generationId || body.data.model !== expectedModel || body.data.provider_name !== "DeepInfra") {
     if (body?.data) throw new EvidenceError("PROVIDER_POLICY", false, undefined, generationId);
@@ -70,25 +77,29 @@ export async function verifyEvidenceGeneration(deps: EvidenceModelDeps, generati
 }
 /** One pinned structured call shared by the A and B roles; returns unparsed content. No internal paid retry. */
 export async function requestStage(deps: EvidenceModelDeps, messages: Array<Record<string, unknown>>, name: string, schema: Record<string, unknown>) {
+  await deps.beforeRequest?.();
   let response;
   let retryAfter: number | undefined;
   try {
+    const send = deps.fetcher ?? ((url: string, init: RequestInit) => fetch(url, init));
     response = await requestOpenRouter(deps.apiKey, deps.modelId, messages, async (url, init) => {
-      const res = await (deps.fetcher ?? fetch)(url, { ...init, redirect: "error", signal: AbortSignal.timeout(120000) });
-      const delay = res.headers.get("Retry-After"); if (delay && /^\d+$/.test(delay)) retryAfter = Number(delay);
+      const res = await send(url, { ...init, redirect: "manual", signal: AbortSignal.timeout(120000) });
+      if (res.status >= 300 && res.status < 400) { await res.body?.cancel(); throw new EvidenceError("PROVIDER_POLICY"); }
+      const delay = res.headers.get("Retry-After"); if (delay && /^\d+$/.test(delay) && Number.isSafeInteger(Number(delay))) retryAfter = Number(delay);
       return res;
     }, { responseFormat: { type: "json_schema", json_schema: { name, strict: true, schema } } });
   } catch (error) {
     if (error instanceof EvidenceError) throw error;
-    throw new EvidenceError("UPSTREAM_UNAVAILABLE", true);
+    throw new EvidenceError("UPSTREAM_UNAVAILABLE", true, undefined, undefined, undefined, true);
   }
   if (!response.ok) {
+    if (response.error.code === "OPENROUTER_INVALID_RESPONSE") throw new EvidenceError("MODEL_INVALID");
     if ("kind" in response.error) throw new EvidenceError("PROVIDER_BILLING_BLOCKED", response.error.retryable, response.error, undefined, response.error.retryAfterSeconds);
     const status = response.error.providerStatus;
     throw new EvidenceError(status === 401 ? "PROVIDER_AUTH" : status === 403 ? "PROVIDER_POLICY" : status === 429 ? "RATE_LIMITED" : "UPSTREAM_UNAVAILABLE", status === 429 || status >= 500 || status === 200, undefined, undefined, retryAfter);
   }
   const data = response.data as any, choice = data?.choices?.[0];
-  if (data.model !== deps.modelId || !/^gen-[A-Za-z0-9_-]{1,150}$/.test(data.id ?? "")) throw new EvidenceError("PROVIDER_POLICY");
+  if (data?.model !== deps.modelId || !/^gen-[A-Za-z0-9_-]{1,150}$/.test(data?.id ?? "")) throw new EvidenceError("PROVIDER_POLICY");
   if (choice?.finish_reason === "length") throw new EvidenceError("CONTEXT_LIMIT");
   if (data.choices?.length !== 1 || choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string" || choice.message.content.length > 1048576) throw new EvidenceError("MODEL_INVALID");
   return { generationId: data.id as string, content: choice.message.content as string };
@@ -116,12 +127,15 @@ export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, a
       limitations: distinct([...input.limitations, ...parsed.limitations, ...event.limitations, ...input.parts.filter(p => event.messageIds.includes(p.messageId)).flatMap(p => p.limitations),
         "model_interpretation_requires_independent_review", ...(event.imageCitations.length ? ["image_interpretation_requires_review"] : [])]), requiresHumanReview: true }));
   }
+  const missingImageIds = distinct(input.parts.flatMap(p => p.imageIds.filter(id => !p.images.some(image => image.id === id))));
+  for (const text of [...parsed.limitations, ...parsed.events.flatMap(event => event.limitations)]) checkSourceCopy(text, input);
+  const output = { runId: input.runId, chunkId: input.chunkId, processedPartIds: parsed.processedPartIds, events: mergeEvents(events),
+    missingImageIds, limitations: distinct([...input.limitations, ...parsed.limitations, ...input.parts.flatMap(p => p.limitations), ...(missingImageIds.length ? ["image_input_incomplete"] : [])]) };
+  if (deps.onValidated) { await assertCurrent(); await deps.onValidated(output, generationId); }
   // Never infer the actual provider from requested routing. Generation metadata confirms it.
   const receipt = await verifyEvidenceGeneration(deps, generationId, deps.modelId);
   try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
-  const missingImageIds = distinct(input.parts.flatMap(p => p.imageIds.filter(id => !p.images.some(image => image.id === id))));
-  return { runId: input.runId, chunkId: input.chunkId, processedPartIds: parsed.processedPartIds, events: mergeEvents(events), receipt,
-    missingImageIds, limitations: distinct([...input.limitations, ...parsed.limitations, ...input.parts.flatMap(p => p.limitations), ...(missingImageIds.length ? ["image_input_incomplete"] : [])]) };
+  return { ...output, receipt };
 }
 export function mergeEvents(values: readonly NormalizedEvidence[]): NormalizedEvidence[] {
   const merged = new Map<string, NormalizedEvidence>();

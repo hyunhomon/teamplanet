@@ -1,6 +1,6 @@
 # Queue 실행·복구 계약
 
-#10은 공통 실행 기반이다. `slack.event` handler는 #11에서 등록했다(API_CONTRACT.md "Slack Events 수신"). `slack.history`(History 보정)는 #12에서 등록했다. AI 분석(#16/#20) handler는 아직 등록하지 않는다. 현재 등록된 `system.probe`는 합성 체크포인트만 저장하며 메일/Slack/AI/학생 데이터에 접근하지 않는다.
+#10은 공통 실행 기반이다. `slack.event`는 #11, `slack.history`는 #12, `analysis.prepare`는 #16, 실제 `analysis.stage`는 #20에서 등록했다. `system.probe`는 합성 체크포인트만 저장하며 메일/Slack/AI/학생 데이터에 접근하지 않는다. 분석 단계·정규화 dispatch 원장·metadata-only retry는 [ANALYSIS_PIPELINE.md](ANALYSIS_PIPELINE.md)를 따른다.
 
 ## 구성과 envelope
 
@@ -52,9 +52,9 @@ const handlers = {
 };
 ```
 
-위 코드는 인터페이스 예시이며 이번에 분석 handler를 등록하지 않는다. 짧은 단계로 나누고 60초 전에 heartbeat를 갱신한다. 각 외부 호출에는 timeout을 둔다. lease가 만료되면 heartbeat/새 commit/완료를 거부한다. DB 쓰기는 반드시 commit의 `writes`에 넣고 별도 무보호 쓰기를 하지 않는다. checkpoint name은 소문자 시작 1–64자 영숫자/`_`/`-`, reference는 1–200자 영숫자/`_:/.-`의 불투명 참조다.
+위 코드는 인터페이스 예시이며 실제 #20 handler는 현재 원문 검증·dispatch fence·정규화 출력·공급자 receipt·상태 전이를 추가한다. 20초마다 heartbeat를 갱신하고 각 외부 호출에 timeout을 둔다. lease가 만료되면 heartbeat/새 commit/완료를 거부한다. DB 쓰기는 반드시 commit의 `writes`에 넣고 별도 무보호 쓰기를 하지 않는다. checkpoint name은 소문자 시작 1–64자 영숫자/`_`/`-`, reference는 1–200자 영숫자/`_:/.-`의 불투명 참조다.
 
-출력 저장 후 완료 전에 중단되면 다음 실행은 저장된 단계를 건너뛰고 완료한다. 완료 후 ACK 전에 중단되어도 재전달에서 handler를 호출하지 않는다. **외부 HTTP 호출까지 exactly-once를 보장하지 않는다.** 외부 요청 성공 후 checkpoint 전에 중단되면 호출이 반복될 수 있다. 후속 handler는 공급자의 멱등 키/조회 기능을 사용하고 반환 결과를 참조로 저장해야 한다. 오래된/철회된 입력의 checkpoint 무효화는 #14/#16에서 연결한다.
+출력 저장 후 완료 전에 중단되면 다음 실행은 저장된 단계를 건너뛰고 완료한다. 완료 후 ACK 전에 중단되어도 재전달에서 handler를 호출하지 않는다. **외부 HTTP 호출까지 exactly-once를 보장하지 않는다.** #20은 전송 전에 dispatch fence를 저장하고 결과 불명 상태의 자동 재전송을 차단한다. 인용 검증을 마친 정규화 출력과 generation ID가 저장된 경우에는 metadata만 재조회한다. #14/#16의 현재 source/run/lease guard를 저장 transaction에 함께 사용한다.
 
 ## 재시도와 실패 기록
 

@@ -106,6 +106,10 @@ export async function assessStudents(deps: EvidenceModelDeps, value: unknown, as
     else assessment = validateAssessmentOutput(raw, input);
   } catch { throw new EvidenceError("MODEL_INVALID"); }
   annotate(assessment, input);
+  if (deps.onValidated) {
+    await assertCurrent();
+    await deps.onValidated({ runId: input.runId, iteration: correction ? 1 : 0, assessment, resolvedIssueIds }, generationId);
+  }
   const receipt = await verifyEvidenceGeneration(deps, generationId, deps.modelId);
   try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
   return { runId: input.runId, iteration: correction ? 1 : 0, assessment, resolvedIssueIds, receipt };
