@@ -25,6 +25,7 @@
 - `docs/AI_ORCHESTRATION.md` 3단계 멀티모델 파이프라인
 - `docs/ANALYSIS_CONTRACT.md` 실행·참조 manifest·A/B/C 공유 계약과 독립 개발 fixture
 - `docs/EVIDENCE_EXTRACTION.md` A adapter·인용/이미지 검증·overlap 병합과 한계
+- `docs/INDEPENDENT_REVIEW.md` C adapter·원문 대조·수정 1회·이견 보존과 사람 검토
 - `docs/ASSESSMENT.md` B adapter·근거 원문 역추적·학생×선택 역량 검증·수정 1회와 한계
 - `docs/EVALUATION_RUBRIC.md` 4개 역량·근거·평가 가드레일
 - `docs/SLACK_ONBOARDING.md` OAuth·채널/봇 설치·동의 마법사
