@@ -3,6 +3,7 @@ import {
   slackConnectionSchema, courseListResponseSchema, teamListResponseSchema,
   studentListResponseSchema, teamMemberListResponseSchema, consentListResponseSchema,
   coursePilotResponseSchema, teamMembershipSchema, collectionStatusResponseSchema, courseRubricResponseSchema,
+  runIdSchema,
   type SlackConnection, type Course, type Team, type Student, type TeamMember,
   type Consent, type CoursePilotResponse, type TeamMembership, type CollectionStatusResponse, type CourseRubricResponse,
 } from "@teamplanet/contracts";
@@ -13,12 +14,15 @@ export function setupLocation(search: string) {
   const course = courseIdSchema.safeParse(params.get("course"));
   const team = teamIdSchema.safeParse(params.get("team"));
   const outcome = slackInstallOutcomeSchema.safeParse(params.get("slack"));
+  const run = runIdSchema.safeParse(params.get("run"));
+  const view = params.get("view") === "analysis" ? "analysis" : "setup";
   const safe = new URLSearchParams();
   if (course.success) safe.set("course", course.data);
   if (team.success) safe.set("team", team.data);
   if (outcome.success) safe.set("slack", outcome.data);
+  if (view === "analysis") { safe.set("view", view); if (run.success) safe.set("run", run.data); }
   return { courseId: course.success ? course.data : "", teamId: team.success ? team.data : "",
-    outcome: outcome.success ? outcome.data : null, search: safe.size ? `?${safe}` : "" };
+    outcome: outcome.success ? outcome.data : null, runId: run.success && view === "analysis" ? run.data : "", view, search: safe.size ? `?${safe}` : "" };
 }
 
 export const oauthMessages = {
