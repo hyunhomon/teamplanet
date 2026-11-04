@@ -51,10 +51,11 @@ export class DashboardController {
       const request = createAnalysisRunSchema.safeParse(raw?.request), runId = runIdSchema.safeParse(raw?.runId);
       if (request.success && (raw.runId === null || runId.success)) saved = { request: request.data, runId: runId.success ? runId.data : null };
     } catch {}
-    this.state = { busy: false, error: "", notice: "", retryAt: 0, stale: true, teams: [], teamId: location.teamId || saved?.request.teamId || "",
-      range: saved ? { from: saved.request.from, to: saved.request.to, timezone: saved.request.timezone } : null,
+    const restoreSaved = !location.runId && (!location.teamId || location.teamId === saved?.request.teamId);
+    this.state = { busy: false, error: "", notice: "", retryAt: 0, stale: true, teams: [], teamId: location.teamId || (restoreSaved ? saved?.request.teamId : "") || "",
+      range: saved && restoreSaved ? requestRange(saved.request) : null,
       preview: null, runs: [], nextBefore: null, run: null, saved };
-    this.initialRunId = location.runId || saved?.runId || "";
+    this.initialRunId = location.runId || (restoreSaved ? saved?.runId : "") || "";
   }
   private initialRunId: string;
   getSnapshot = () => this.state;

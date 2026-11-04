@@ -99,3 +99,24 @@ test("blocking storage prevents an unrecoverable POST; invalid date, offset and 
   const url = setupLocation(`?view=analysis&team=${teamId}&run=${h.state.run.id}&token=secret&next=https://other.invalid`);
   expect(url.runId).toBe(h.state.run.id); expect(url.search).not.toContain("token"); expect(url.search).not.toContain("next");
 });
+
+test("an explicit team or run link takes precedence over a different team's saved request", async () => {
+  const h = harness(); await h.controller.load(); h.controller.setRange(range); await h.controller.preview(); await h.controller.create();
+  const otherTeamId = "team_00000000-0000-4000-8000-000000000099", otherRunId = "run_00000000-0000-4000-8000-000000000099";
+  const dashboard = structuredClone(dashboardFixture), otherRun = { ...h.state.run, id: otherRunId, teamId: otherTeamId };
+  dashboard.teams.push({ ...dashboard.teams[0]!, team: { ...dashboard.teams[0]!.team, id: otherTeamId } });
+  const fetcher = (async (url) => {
+    const path = String(url);
+    if (path.endsWith("analysis-dashboard")) return Response.json(dashboard);
+    if (path.includes("/teams/")) return Response.json({ teamId: path.includes(otherTeamId) ? otherTeamId : teamId, runs: [], nextBefore: null });
+    return Response.json(path.includes(otherRunId) ? otherRun : h.state.run);
+  }) as typeof fetch;
+  for (const location of [{ teamId: otherTeamId, runId: "" }, { teamId: "", runId: otherRunId }]) {
+    const controller = new DashboardController(() => {}, professors[0]!.id, h.storage, fetcher, location, () => at);
+    await controller.load();
+    expect(controller.getSnapshot().error).toBe("");
+    expect(controller.getSnapshot().teamId).toBe(otherTeamId);
+    expect(controller.getSnapshot().run?.id ?? "").toBe(location.runId);
+    expect(controller.getSnapshot().saved?.request.teamId).toBe(teamId);
+  }
+});

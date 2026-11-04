@@ -141,7 +141,11 @@ export async function withChunkInput<T>(deps: ImageDeps, runId: string, chunkId:
   const plan = chunkPlanSchema.parse(JSON.parse(planRow.plan_json));
   const wanted = [...plan.context, ...plan.parts], ids = [...new Set(wanted.map(p => p.messageId))];
   const parts: EvidenceInput["parts"] = [], checks: (() => Promise<void>)[] = [];
-  const assertCurrent = async () => { await runValidityGuard(db, runId, deps.now()).run(); for (const check of checks) await check(); };
+  const assertCurrent = async () => {
+    await runValidityGuard(db, runId, deps.now()).run();
+    for (const check of checks) await check();
+    await runValidityGuard(db, runId, deps.now()).run();
+  };
   async function load(index: number): Promise<T> {
     await runValidityGuard(db, runId, deps.now()).run();
     if (index === ids.length) {
