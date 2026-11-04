@@ -49,7 +49,7 @@ export function parseOpenRouter402(
   };
 }
 
-/** Minimal request helper; orchestration and Queue retries belong in the API worker. */
+/** Minimal request helper; orchestration and Queue retries belong in the Consumer worker. */
 export async function requestOpenRouter(
   apiKey: string,
   model: string,

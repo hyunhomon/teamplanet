@@ -148,7 +148,7 @@ bunx wrangler secret put SLACK_TOKEN_KEY   # API와 같은 값 (#12 History 보�
 
 3. 설치·권한 확인은 [SLACK_ONBOARDING.md](SLACK_ONBOARDING.md) 1단계를 따릅니다. Slack은 HTTPS redirect만 허용하므로 로컬 `http://127.0.0.1`에서는 실제 설치를 하지 않고 테스트의 OAuth 가짜 응답으로 검증합니다.
 
-OpenRouter 비밀 값은 기능 구현 시 API Worker의 secrets로 등록합니다. `.dev.vars`, `.env`, 인증 토큰과 학생 데이터는 커밋하지 않습니다. UI의 연결 표시는 실제 API 상태이며, 초기 화면에서 로그인이나 분석이 구현된 것처럼 표시하지 않습니다.
+OpenRouter 비밀 값은 분석을 실행하는 Consumer Worker의 `OPENROUTER_API_KEY` secret으로 등록합니다. 자세한 슬롯/키 설정은 아래 분석 Consumer 설정을 따릅니다. `.dev.vars`, `.env`, 인증 토큰과 학생 데이터는 커밋하지 않습니다. UI의 연결 표시는 실제 API 상태이며, 초기 화면에서 로그인이나 분석이 구현된 것처럼 표시하지 않습니다.
 
 참고: [Cloudflare GitHub Actions](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/), [Workers Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Astro Cloudflare 어댑터](https://docs.astro.build/en/guides/integrations-guide/cloudflare/).
 
