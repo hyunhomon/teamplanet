@@ -74,7 +74,7 @@ test("B sends the pinned ZDR schema request with source data only as user data, 
 });
 
 test("shared Korean cases keep their direction; review flags and limitations only ever go up", async () => {
-  for (const sample of evaluationCases.filter(c => c.id !== "image-context-and-injection")) {
+  for (const sample of evaluationCases) {
     const input = await caseInput(sample.id), result = await assessStudents(model(expectedOutput(input, sample.id)).deps, input, allowed);
     const own = result.assessment.assessments.find(r => r.studentId === STUDENT)!, peer = result.assessment.assessments.find(r => r.studentId === PEER)!;
     expect(own.judgement).toBe(sample.expected.judgement); expect(own.evidenceIds).toEqual(sample.expected.evidenceIds); expect(own.counterEvidenceIds).toEqual(sample.expected.counterEvidenceIds);
@@ -112,6 +112,15 @@ test("fake, stale or misattributed evidence never reaches the model", async () =
   // The peer did not author the target student's statement; that behavior is not the peer's.
   const misattributed = clone(input); misattributed.evidence[0]!.citations = misattributed.evidence[0]!.citations.slice(1); misattributed.evidence[0]!.actorIds = [PEER];
   await rejects(misattributed, raw, "DATA_INVALIDATED", 0);
+  // An image-only actor needs the verified uploader in the input; a missing or uncertain image attributes nobody. Bytes stay with A.
+  const imageId = "image_00000000-0000-4000-8000-000000000018", viaImage = clone(input), event = viaImage.evidence[0]!;
+  viaImage.parts[1]!.imageIds = [imageId]; Object.assign(event, { messageIds: [viaImage.parts[1]!.messageId], citations: [], imageIds: [imageId], modality: "image" });
+  await rejects(viaImage, raw, "DATA_INVALIDATED", 0);
+  viaImage.parts[1]!.images = [{ id: imageId, dataUrl: "data:image/png;base64,AA==", studentId: null, limitations: ["image_author_uncertain"] }];
+  await rejects(viaImage, raw, "DATA_INVALIDATED", 0);
+  viaImage.parts[1]!.images[0]!.studentId = STUDENT;
+  const uploader = model(raw), result = await assessStudents(uploader.deps, viaImage, allowed);
+  expect(result.assessment.assessments[0]!.evidenceIds).toEqual([event.id]); expect(JSON.stringify(sent(uploader.calls))).not.toContain("base64");
   const unknown = clone(input); unknown.evidence[0]!.actorIds = ["student_00000000-0000-4000-8000-000000009999"];
   await rejects(unknown, raw, "MODEL_INVALID", 0);
   const unselected = clone(input); unselected.evidence[0]!.behaviorTags = ["decision_execution"];
