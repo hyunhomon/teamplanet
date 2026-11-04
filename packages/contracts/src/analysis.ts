@@ -135,3 +135,6 @@ export type Part = z.infer<typeof partSchema>;
 export type EvidenceInput = z.infer<typeof evidenceInputSchema>;
 export type NormalizedEvidence = z.infer<typeof normalizedEvidenceSchema>;
 export const evidenceOutputJsonSchema = z.toJSONSchema(evidenceModelOutputSchema);
+export type AssessmentInput = z.infer<typeof assessmentInputSchema>;
+export type AssessmentOutput = z.infer<typeof assessmentOutputSchema>;
+export const assessmentOutputJsonSchema = z.toJSONSchema(assessmentOutputSchema), correctionOutputJsonSchema = z.toJSONSchema(correctionOutputSchema);

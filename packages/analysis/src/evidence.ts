@@ -16,17 +16,22 @@ export type EvidenceChunkResult = { runId: string; chunkId: string; processedPar
 export type EvidenceModelDeps = { apiKey: string; modelId: string; fetcher?: (url: string, init: RequestInit) => Promise<Response> };
 const distinct = (values: string[]) => [...new Set(values)].sort();
 const inference = /성격|내향적|외향적|게으|무능|속마음|의도(?:가|는|를)|동기(?:가|는|를)|성별|인종|종교|장애인|우울증|성적|낙제|발언량|메시지\s*(?:수|개수)|발언\s*횟수|\b(?:lazy|introvert|extrovert|personality|grade|motivation|IQ)\b/i;
-function checkSummary(summary: string, input: EvidenceInput) {
+/** `support` adds already verified text (B: A summaries) to the action-word check only, never to the source-copy check. */
+export function checkSummary(summary: string, input: { parts: readonly { text: string }[] }, support: readonly string[] = []) {
   if (inference.test(summary)) throw new EvidenceError("MODEL_INVALID");
   // An external action cannot be manufactured from an unrelated, correctly quoted statement.
-  const source = input.parts.map(p => p.text).join("\n");
+  const source = [...input.parts.map(p => p.text), ...support].join("\n");
   for (const action of ["배포", "구현", "수정", "완성", "테스트", "합의", "커밋", "코드", "디자인", "설계", "회의", "제출", "승인"]) {
     const supported = action === "수정" ? /수정|추가|고쳤|반영/.test(source) : source.includes(action);
     if (summary.includes(action) && !supported) throw new EvidenceError("MODEL_INVALID");
   }
+  checkSourceCopy(summary, input);
+}
+/** Applies to every generated field that may be persisted, including limitations. */
+export function checkSourceCopy(text: string, input: { parts: readonly { text: string }[] }) {
   for (const p of input.parts) {
-    if (p.text.length >= 12 && summary.includes(p.text)) throw new EvidenceError("MODEL_INVALID");
-    for (let i = 0; i + 32 <= summary.length; i++) if (p.text.includes(summary.slice(i, i + 32))) throw new EvidenceError("MODEL_INVALID");
+    if (p.text.length >= 12 && text.includes(p.text)) throw new EvidenceError("MODEL_INVALID");
+    for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) throw new EvidenceError("MODEL_INVALID");
   }
 }
 function modelMessages(input: EvidenceInput) {
@@ -63,23 +68,16 @@ export async function verifyEvidenceGeneration(deps: EvidenceModelDeps, generati
   }
   return { generationId, model: expectedModel, provider: "DeepInfra", requestedProvider: modelProfile.provider, promptVersion: evidencePromptVersion };
 }
-/** For already-authorized memory input. Production orchestration should use extractRunEvidence below. No internal paid retry. */
-export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, assertCurrent: () => Promise<void>): Promise<EvidenceChunkResult> {
-  if (typeof deps.apiKey !== "string" || !deps.apiKey.trim() || deps.modelId !== modelProfile.model) throw new EvidenceError("CONFIG_INVALID");
-  const input = evidenceInputSchema.parse(value), messages = modelMessages(input);
-  try {
-    validateEvidenceOutput({ version: input.version, processedPartIds: input.primaryPartIds, events: [], limitations: [] }, input);
-    if (input.parts.some(p => p.images.some(i => !p.imageIds.includes(i.id) || i.studentId !== null && !input.students.some(s => s.id === i.studentId)))) throw new Error();
-  } catch { throw new EvidenceError("MODEL_INVALID"); }
+/** One pinned structured call shared by the A and B roles; returns unparsed content. No internal paid retry. */
+export async function requestStage(deps: EvidenceModelDeps, messages: Array<Record<string, unknown>>, name: string, schema: Record<string, unknown>) {
   let response;
   let retryAfter: number | undefined;
-  try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
   try {
     response = await requestOpenRouter(deps.apiKey, deps.modelId, messages, async (url, init) => {
       const res = await (deps.fetcher ?? fetch)(url, { ...init, redirect: "error", signal: AbortSignal.timeout(120000) });
       const delay = res.headers.get("Retry-After"); if (delay && /^\d+$/.test(delay)) retryAfter = Number(delay);
       return res;
-    }, { responseFormat: { type: "json_schema", json_schema: { name: "teamplanet_evidence_v1", strict: true, schema: evidenceOutputJsonSchema } } });
+    }, { responseFormat: { type: "json_schema", json_schema: { name, strict: true, schema } } });
   } catch (error) {
     if (error instanceof EvidenceError) throw error;
     throw new EvidenceError("UPSTREAM_UNAVAILABLE", true);
@@ -93,8 +91,20 @@ export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, a
   if (data.model !== deps.modelId || !/^gen-[A-Za-z0-9_-]{1,150}$/.test(data.id ?? "")) throw new EvidenceError("PROVIDER_POLICY");
   if (choice?.finish_reason === "length") throw new EvidenceError("CONTEXT_LIMIT");
   if (data.choices?.length !== 1 || choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string" || choice.message.content.length > 1048576) throw new EvidenceError("MODEL_INVALID");
+  return { generationId: data.id as string, content: choice.message.content as string };
+}
+/** For already-authorized memory input. Production orchestration should use extractRunEvidence below. No internal paid retry. */
+export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, assertCurrent: () => Promise<void>): Promise<EvidenceChunkResult> {
+  if (typeof deps.apiKey !== "string" || !deps.apiKey.trim() || deps.modelId !== modelProfile.model) throw new EvidenceError("CONFIG_INVALID");
+  const input = evidenceInputSchema.parse(value), messages = modelMessages(input);
+  try {
+    validateEvidenceOutput({ version: input.version, processedPartIds: input.primaryPartIds, events: [], limitations: [] }, input);
+    if (input.parts.some(p => p.images.some(i => !p.imageIds.includes(i.id) || i.studentId !== null && !input.students.some(s => s.id === i.studentId)))) throw new Error();
+  } catch { throw new EvidenceError("MODEL_INVALID"); }
+  try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
+  const { generationId, content } = await requestStage(deps, messages, "teamplanet_evidence_v1", evidenceOutputJsonSchema);
   let parsed;
-  try { parsed = validateEvidenceOutput(JSON.parse(choice.message.content), input); } catch { throw new EvidenceError("MODEL_INVALID"); }
+  try { parsed = validateEvidenceOutput(JSON.parse(content), input); } catch { throw new EvidenceError("MODEL_INVALID"); }
   if (parsed.events.length > 512) throw new EvidenceError("CONTEXT_LIMIT");
   const events: NormalizedEvidence[] = [];
   for (const event of parsed.events) {
@@ -107,7 +117,7 @@ export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, a
         "model_interpretation_requires_independent_review", ...(event.imageCitations.length ? ["image_interpretation_requires_review"] : [])]), requiresHumanReview: true }));
   }
   // Never infer the actual provider from requested routing. Generation metadata confirms it.
-  const receipt = await verifyEvidenceGeneration(deps, data.id, deps.modelId);
+  const receipt = await verifyEvidenceGeneration(deps, generationId, deps.modelId);
   try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
   const missingImageIds = distinct(input.parts.flatMap(p => p.imageIds.filter(id => !p.images.some(image => image.id === id))));
   return { runId: input.runId, chunkId: input.chunkId, processedPartIds: parsed.processedPartIds, events: mergeEvents(events), receipt,
