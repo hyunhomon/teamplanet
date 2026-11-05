@@ -1,9 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { competencyLabels, type ResultResponse } from "@teamplanet/contracts";
-import { ResultController } from "../lib/results";
+import { ResultController, judgementLabels } from "../lib/results";
 import { limitationLabels } from "../lib/analysis-dashboard";
+import ProfessorFinalizationForm from "./ProfessorFinalization";
 const limitation = (text: string) => limitationLabels[text] ?? ({ model_interpretation_requires_independent_review: "모델의 해석을 원문과 독립 대조해야 합니다.", image_interpretation_requires_review: "이미지 해석은 교수 확인이 필요합니다." } as Record<string,string>)[text] ?? text;
-export const judgementLabels = { observed_strength: "관찰된 강점", mixed: "강점·반례 혼재", needs_support: "지원 필요", insufficient_evidence: "관찰 불충분" };
 export function AnalysisHistory({ result }: { result: ResultResponse }) {
   const a = result.artifacts;
   const studentName = (id: string) => result.students.find(s => s.id === id)?.displayName;
@@ -25,7 +25,7 @@ export function AnalysisHistory({ result }: { result: ResultResponse }) {
       : <p>AI 추가 수정 없이 최초 검토를 최종 검토로 사용했습니다.</p>}
   </details>;
 }
-export default function ResultViewer({ runId, onSignedOut }: { runId: string; onSignedOut(): void }) {
+export default function ResultViewer({ runId, onSignedOut, onFinalized }: { runId: string; onSignedOut(): void; onFinalized?(): void }) {
   const [controller] = useState(() => new ResultController(runId, onSignedOut));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot), result = state.result;
   useEffect(() => {
@@ -54,6 +54,7 @@ export default function ResultViewer({ runId, onSignedOut }: { runId: string; on
         </section>)}
       </article>)}
       <AnalysisHistory result={result} />
+      <ProfessorFinalizationForm key={`${result.runId}:${result.artifactHash}:${result.status}`} result={result} onSaved={() => { void controller.load(); onFinalized?.(); }} onSignedOut={onSignedOut} onVerificationFailed={message => controller.reject(message)} />
     </>}
     {state.evidence && <section className="result-evidence" aria-live="polite"><h4>선택한 근거</h4><p>{state.evidence.summary}</p>
       <ul>{state.evidence.limitations.map((l,i) => <li key={i}>{l}</li>)}</ul>

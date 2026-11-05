@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { collectionFixture } from "./collection";
 import { analysisRoutes } from "../../apps/api/src/analysis";
 import { resultRoutes } from "../../apps/api/src/results";
+import { finalizationRoutes } from "../../apps/api/src/finalization";
 import type { ProtectedEnv } from "../../apps/api/src/guard";
 import { analysisArtifactsSchema, analysisRunResponseSchema, jobKey, type NormalizedEvidence } from "@teamplanet/contracts";
 import { prepareRun, withChunkInput, reconcileReview, loadSpec, analysisId } from "@teamplanet/analysis";
@@ -21,6 +22,7 @@ export async function resultFixture(messageCount = 1) {
   f.sqlite.run("INSERT INTO collection_coverage (request_id,team_id,from_ms,to_ms,status,started_at,updated_at) VALUES (?,?,?,?,'complete',?,?)", [crypto.randomUUID(), f.teamId, f.start, f.start + 200000, clock, clock]);
   const app = new Hono<ProtectedEnv>(); app.use("*", async (c, next) => { c.set("professor", professor); await next(); });
   app.route("/v1", analysisRoutes(() => clock, send)); app.route("/v1", resultRoutes(() => clock, send));
+  app.route("/v1", finalizationRoutes(() => clock, send));
   const env = { DB: f.db, SLACK_TOKEN_KEY: f.tokenKey };
   const call = (path: string, body?: unknown) => app.request(`https://synthetic/v1/${path}`, { method: body === undefined ? "GET" : "POST",
     headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, env);

@@ -26,6 +26,9 @@ test("viewer uses owned result/evidence/message contracts and clears stale conte
     await controller.load(); expect(controller.getSnapshot().result?.artifacts.candidate.assessments).toHaveLength(1);
     await controller.openEvidence(f.artifacts.evidence[0]!.id); await controller.openMessage(f.artifacts.evidence[0]!.messageIds[0]!);
     expect(controller.getSnapshot().context?.messages[0]!.text).toBe(f.text);
+    controller.reject("확정 원문 검증 실패");
+    expect(controller.getSnapshot()).toMatchObject({ result: null, evidence: null, context: null, error: "확정 원문 검증 실패" });
+    await controller.load();
     f.outage(); await controller.load(); expect(controller.getSnapshot().result).toBeNull(); expect(controller.getSnapshot().context).toBeNull(); expect(controller.getSnapshot().error).toContain("삭제로 판단하지 않았");
   } finally { f.sqlite.close(); }
 });
