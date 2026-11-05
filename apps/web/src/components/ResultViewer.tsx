@@ -1,9 +1,30 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { competencyLabels } from "@teamplanet/contracts";
+import { competencyLabels, type ResultResponse } from "@teamplanet/contracts";
 import { ResultController } from "../lib/results";
 import { limitationLabels } from "../lib/analysis-dashboard";
 const limitation = (text: string) => limitationLabels[text] ?? ({ model_interpretation_requires_independent_review: "모델의 해석을 원문과 독립 대조해야 합니다.", image_interpretation_requires_review: "이미지 해석은 교수 확인이 필요합니다." } as Record<string,string>)[text] ?? text;
 export const judgementLabels = { observed_strength: "관찰된 강점", mixed: "강점·반례 혼재", needs_support: "지원 필요", insufficient_evidence: "관찰 불충분" };
+export function AnalysisHistory({ result }: { result: ResultResponse }) {
+  const a = result.artifacts;
+  const studentName = (id: string) => result.students.find(s => s.id === id)?.displayName;
+  const assessment = (value: typeof a.originalAssessment) => <>
+    {value.overviews.map(o => <section key={o.studentId}><h5>{studentName(o.studentId)} · 개요</h5><p>{o.summary}</p>
+      {o.requiresHumanReview && <p>교수 검토 필요</p>}<ul>{o.limitations.map((l,i) => <li key={i}>{limitation(l)}</li>)}</ul></section>)}
+    {value.assessments.map(r => <section key={`${r.studentId}:${r.key}`}><h5>{studentName(r.studentId)} · {competencyLabels[r.key]} · {judgementLabels[r.judgement]}</h5><p>{r.narrative}</p>
+      {r.requiresHumanReview && <p>교수 검토 필요</p>}<ul>{r.limitations.map((l,i) => <li key={i}>{limitation(l)}</li>)}</ul></section>)}
+  </>;
+  const review = (value: typeof a.firstReview) => <>
+    <p>{value.decision === "accept" ? "수용" : value.decision === "request_correction" ? "수정 요구" : "사람 검토"}{value.requiresHumanReview && " · 교수 검토 필요"}</p>
+    {value.issues.map(i => <p key={i.id}>{studentName(i.studentId)} · {competencyLabels[i.competency]}: {i.instruction}</p>)}
+    <ul>{value.limitations.map((l,i) => <li key={i}>{limitation(l)}</li>)}</ul>
+  </>;
+  return <details><summary>원래 AI 초안과 독립 검토·수정 이력</summary>
+    <h4>원래 AI 초안</h4>{assessment(a.originalAssessment)}
+    <h4>최초 독립 검토</h4>{review(a.firstReview)}
+    {a.correction ? <><h4>AI 수정본 · 1회</h4>{assessment(a.correction.assessment)}<h4>최종 독립 재검토</h4>{review(a.finalReview)}</>
+      : <p>AI 추가 수정 없이 최초 검토를 최종 검토로 사용했습니다.</p>}
+  </details>;
+}
 export default function ResultViewer({ runId, onSignedOut }: { runId: string; onSignedOut(): void }) {
   const [controller] = useState(() => new ResultController(runId, onSignedOut));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot), result = state.result;
@@ -32,16 +53,7 @@ export default function ResultViewer({ runId, onSignedOut }: { runId: string; on
           <h6>관찰 한계</h6><ul>{row.limitations.map((l,i) => <li key={i}>{limitation(l)}</li>)}</ul>
         </section>)}
       </article>)}
-      <details><summary>원래 AI 초안과 독립 검토·수정 이력</summary>
-        {result.artifacts.originalAssessment.overviews.map(o => <p key={o.studentId}>초기 개요: {o.summary}</p>)}
-        {result.artifacts.originalAssessment.assessments.map(r => <p key={`${r.studentId}:${r.key}`}>{competencyLabels[r.key]} · {judgementLabels[r.judgement]}: {r.narrative}</p>)}
-        <p>최초 검토: {result.artifacts.firstReview.decision === "accept" ? "수용" : result.artifacts.firstReview.decision === "request_correction" ? "수정 요구" : "사람 검토"}</p>
-        {result.artifacts.firstReview.issues.map(i => <p key={i.id}>수정 요구: {i.instruction}</p>)}
-        <p>{result.artifacts.correction ? "AI 수정 1회 후 재검토했습니다." : "AI 추가 수정 없이 검토했습니다."}</p>
-        {result.artifacts.correction?.assessment.assessments.map(r => <p key={`${r.studentId}:${r.key}`}>수정본: {r.narrative}</p>)}
-        {result.artifacts.finalReview.issues.map(i => <p className="form-notice" key={i.id}>남은 이견: {i.instruction}</p>)}
-        <ul>{result.artifacts.finalReview.limitations.map((l,i) => <li key={i}>{limitation(l)}</li>)}</ul>
-      </details>
+      <AnalysisHistory result={result} />
     </>}
     {state.evidence && <section className="result-evidence" aria-live="polite"><h4>선택한 근거</h4><p>{state.evidence.summary}</p>
       <ul>{state.evidence.limitations.map((l,i) => <li key={i}>{l}</li>)}</ul>
