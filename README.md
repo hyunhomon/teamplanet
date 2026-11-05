@@ -26,6 +26,7 @@
 - `docs/ANALYSIS_CONTRACT.md` 실행·참조 manifest·A/B/C 공유 계약과 독립 개발 fixture
 - `docs/ANALYSIS_PIPELINE.md` 실제 A/B/C Queue 실행·정규화 결과·공급자 오류·metadata 재시도와 운영 설정
 - `docs/ANALYSIS_DASHBOARD.md` 교수 소유 팀·기간 프리뷰·멱등 실행/복원·진행 및 취소/재개
+- `docs/RESULT_VIEWER.md` 결과·반례·검토 이력과 재검증된 내부 원문 문맥
 - `docs/EVIDENCE_EXTRACTION.md` A adapter·인용/이미지 검증·overlap 병합과 한계
 - `docs/INDEPENDENT_REVIEW.md` C adapter·원문 대조·수정 1회·이견 보존과 사람 검토
 - `docs/ASSESSMENT.md` B adapter·근거 원문 역추적·학생×선택 역량 검증·수정 1회와 한계

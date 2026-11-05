@@ -303,6 +303,8 @@ Events 원문 참조 접수와 Consumer source 쓰기는 collectionWriteGuard를
 학생 QR #29: 교수는 같은 수업 학생의 오프라인 동의를 Slack 가입 전에 기록할 수 있고, 본인 확인 후 개인 fragment 링크/QR을 직접 전달합니다. 미매핑 참가자는 API 활성화 및 최종 DB 쓰기 모두 차단합니다. 학생 조회는 현재 grant/정책/수업 유효성을 검증하고 담당 교수 이메일을 반환하며 교수 쿠키를 사용/발급하지 않습니다. 기존 원자적 링크 발급·학생 확인·수집 guard를 보존합니다. 자세한 절차는 STUDENT_CONFIRMATION.md를 따릅니다.
 # 데이터 수명주기 API
 
+#22 결과 API는 `GET /v1/analysis-runs/:id/assessments`, `/evidence/:evidenceId`, `/messages/:messageId?after=<internal-id>`다. 공유 `results.ts`와 [RESULT_VIEWER.md](RESULT_VIEWER.md)를 따른다. 소유권·현재 원문/이미지·요약/후보 일관성을 검증하고 내부 manifest의 허용 스레드만 20개씩 반환한다. 404 타인/없음,409 미완료/무효,503 Slack 검증 장애이며 no-store다. 원문·이미지 URL·토큰을 영구 저장하지 않는다.
+
 #14의 교수 소유권 보호 상태·무효화·조기 삭제/재시도는 [DATA_LIFECYCLE.md](DATA_LIFECYCLE.md)와 `packages/contracts/src/lifecycle.ts`를 따른다. 무효화는 교수 확정본에도 적용하며, validity 없는 과거 실행은 검증 전 차단한다.
 
 학생 문의 #30은 [INQUIRIES.md](INQUIRIES.md)와 `packages/contracts/src/inquiries.ts`를 따른다. 수집 동의와 분리된 본인 문의 권한, 접수 당시 n일, 일회성 ticket, 만료 조회 차단과 자동 삭제를 사용한다.

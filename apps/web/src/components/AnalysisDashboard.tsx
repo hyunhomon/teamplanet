@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore, type SubmitEvent } from "rea
 import { competencyLabels } from "@teamplanet/contracts";
 import { DashboardController, blockLabels, limitationLabels, runningStatuses, seoulDateTime, seoulInput, statusLabels } from "../lib/analysis-dashboard";
 import { setupLocation } from "../lib/setup";
+import ResultViewer from "./ResultViewer";
 const time = (iso: string | null) => iso ? new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" }).format(new Date(iso)) : "설정 안 됨";
 const collectionLabel = { active: "수집 중", inactive: "수집 비활성", paused: "수집 중지" };
 export default function AnalysisDashboard({ professorId, onSignedOut }: { professorId: string; onSignedOut(): void }) {
@@ -110,6 +111,7 @@ export default function AnalysisDashboard({ professorId, onSignedOut }: { profes
           {!runningStatuses.has(run.status) && <button className="button secondary" disabled={disabled || state.stale} onClick={() => controller.newVersion()}>새 분석 버전 준비</button>}</div>
         <p className="field-help">새 버전은 기존 실행을 덮어쓰지 않습니다. 분석 후보는 교수의 최종 확정이 아닙니다.</p>
       </section>}
+      {run && ["awaiting_professor", "finalized"].includes(run.status) && <ResultViewer key={run.id} runId={run.id} onSignedOut={onSignedOut} />}
       <section className="analysis-panel" aria-labelledby="history-title"><h3 id="history-title">실행 이력</h3>
         {!state.runs.length && <p>이 팀의 분석 실행이 아직 없습니다.</p>}
         <ul className="analysis-history">{state.runs.map(r => <li key={r.id}><button className="text-button" disabled={disabled} onClick={() => void controller.selectRun(r.id)}>버전 {r.version} · {time(r.from)} — {time(r.to)}</button><span>{statusLabels[r.id === run?.id ? run.status : r.status]}</span></li>)}</ul>
