@@ -17,7 +17,7 @@ export default function StudentReportPage() {
     if (!location || pending.current) return;
     const previous = report;
     if (printing && (!checked || !previous)) return;
-    pending.current = true; setBusy(true); setError(""); setAuthorized(false); setReport(null);
+    pending.current = true; setBusy(true); setError(""); setAuthorized(false); setReport(null); setChecked(false);
     const controller = abort.current = new AbortController(), timeout = setTimeout(() => controller.abort(), 120000);
     try {
       if (printing) await document.fonts.ready;
@@ -25,12 +25,13 @@ export default function StudentReportPage() {
         method: printing ? "POST" : "GET", credentials: "same-origin", cache: "no-store", signal: controller.signal,
         ...(printing ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ artifactHash: previous!.artifactHash,
           professorConfirmedAt: previous!.professorConfirmedAt, privacyReviewed: true, requestId: crypto.randomUUID() }) } : {}) });
-      if (!mounted.current) return;
+      if (!mounted.current || controller.signal.aborted) return;
       if (!response.ok) {
         setChecked(false); setError(response.status === 401 ? "교수 로그인이 필요합니다. 로그인 후 이 페이지를 다시 확인하세요." : response.status === 503 ? "Slack 검증 장애로 출력하지 않습니다. 삭제로 판단하지 않았습니다."
           : response.status === 404 ? "접근할 수 없거나 이 실행에 속하지 않는 학생입니다." : "원문 변경·철회·만료·미확정 또는 버전 충돌로 출력할 수 없습니다. 이전 버전 정정 여부도 확인하세요."); return;
       }
       const next = studentReportSchema.parse(await response.json());
+      if (!mounted.current || controller.signal.aborted) return;
       if (next.runId !== location.run || next.studentId !== location.student) throw Error();
       if (printing) {
         approvedAt.current = Date.now(); flushSync(() => { setReport(next); setAuthorized(true); });
@@ -43,7 +44,10 @@ export default function StudentReportPage() {
   }
   useEffect(() => {
     mounted.current = true; void read();
-    const before = () => { if (!approvedAt.current || Date.now() - approvedAt.current > 20000) flushSync(() => setAuthorized(false)); };
+    const before = () => {
+      window.history.replaceState(null, "", "/reports/print");
+      if (!approvedAt.current || Date.now() - approvedAt.current > 20000) flushSync(() => setAuthorized(false));
+    };
     const after = () => { approvedAt.current = 0; setAuthorized(false); setChecked(false); setReport(null);
       if (location) window.history.replaceState(null, "", `/reports/print?run=${location.run}&student=${location.student}`); };
     const hidden = () => { if (document.visibilityState === "hidden" && !approvedAt.current) { abort.current?.abort(); setReport(null); setChecked(false); } };

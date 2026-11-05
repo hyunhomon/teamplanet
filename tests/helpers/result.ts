@@ -10,7 +10,7 @@ import { prepareRun, withChunkInput, reconcileReview, loadSpec, analysisId } fro
 import { sha256Hex } from "@teamplanet/collection";
 import { JobStore } from "@teamplanet/queue";
 /** Fully synthetic result on real migrations/source fences. No external service or student data. */
-export async function resultFixture(messageCount = 1, reviewLimitation?: string) {
+export async function resultFixture(messageCount = 1, reviewLimitation?: string, chunkLimitation?: string) {
   const f = await collectionFixture(); let clock = f.now(), professor = f.professor, outage = false, changed = false, deleted = false;
   const messages = Array.from({ length: messageCount }, (_, i) => ({ ts: i === 0 ? f.slackTs : `${Math.floor(Number(f.slackTs)) + i}.000000`, user: f.userId,
     text: i === 0 ? f.text : `합성 스레드 응답 ${i}`, ...(messageCount > 1 ? { thread_ts: f.slackTs, ...(i === 0 ? { reply_count: messageCount - 1 } : {}) } : {}) }));
@@ -37,11 +37,12 @@ export async function resultFixture(messageCount = 1, reviewLimitation?: string)
     const { chunkId, primaryPartIds, ...context } = source;
     const assessment = { version: source.version, runId: run.id, overviews: [{ studentId: p.studentId, summary: "관찰 범위를 확인해야 한다.", limitations: ["단일 관찰"], requiresHumanReview: true }],
       assessments: [{ studentId: p.studentId, key: "clarity", judgement: "observed_strength", narrative: "설명 발화가 관찰됐다.", evidenceIds: [e.id], counterEvidenceIds: [], confidence: "medium", limitations: ["단일 관찰"], requiresHumanReview: true }] };
+    if (chunkLimitation) { e.limitations.push(chunkLimitation); assessment.overviews[0]!.limitations.push(chunkLimitation); assessment.assessments[0]!.limitations.push(chunkLimitation); }
     const review = { version: source.version, runId: run.id, iteration: 0, decision: "accept", issues: [], limitations: reviewLimitation ? [reviewLimitation] : [], requiresHumanReview: true };
     const receipt = { generationId: "gen-synthetic-result", model: "qwen/qwen3.5-9b", provider: "DeepInfra", requestedProvider: "deepinfra/bf16", promptVersion: "communication-prompts-v1" };
-    f.sqlite.run("INSERT INTO analysis_stage_results VALUES (?, 'evidence_extraction', 'chunk_0', 0, ?, ?, ?, ?, ?)", [run.id, JSON.stringify({ runId: run.id, chunkId, processedPartIds: primaryPartIds, events: [e], limitations: [], missingImageIds: [], receipt }), receipt.model, receipt.provider, receipt.promptVersion, clock]);
+    f.sqlite.run("INSERT INTO analysis_stage_results VALUES (?, 'evidence_extraction', 'chunk_0', 0, ?, ?, ?, ?, ?)", [run.id, JSON.stringify({ runId: run.id, chunkId, processedPartIds: primaryPartIds, events: [e], limitations: chunkLimitation ? [chunkLimitation] : [], missingImageIds: [], receipt }), receipt.model, receipt.provider, receipt.promptVersion, clock]);
     const spec = (await loadSpec(f.db, run.id))!;
-    const input = { ...context, limitations: JSON.parse(spec.manifest_json!).limitations, evidence: [e], correction: null, assessment, iteration: 0 };
+    const input = { ...context, limitations: [...JSON.parse(spec.manifest_json!).limitations, ...(chunkLimitation ? [chunkLimitation] : [])], evidence: [e], correction: null, assessment, iteration: 0 };
     const history = await reconcileReview(input, review);
     return analysisArtifactsSchema.parse({ version: "analysis-output-v1", runId: run.id, snapshot: JSON.parse(spec.snapshot_json), manifest: JSON.parse(spec.manifest_json!),
       evidence: [e], originalAssessment: history.originalAssessment, firstReview: history.firstReview, correction: null, finalReview: history.finalReview, candidate: history.candidate,

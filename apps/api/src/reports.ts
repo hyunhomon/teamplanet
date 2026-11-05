@@ -34,20 +34,28 @@ export function reportRoutes(now: () => number, send: ImageDeps["send"]) {
       // C's aggregate limitations may mention other students; take only this student's pre-aggregation B rows.
       const scopedAssessment = a.correction?.assessment ?? a.originalAssessment;
       const overview = scopedAssessment.overviews.find(o => o.studentId === studentId.data)!;
+      const originalOverview = a.originalAssessment.overviews.find(o => o.studentId === studentId.data)!;
+      // A's chunk-wide free text is also inherited by B overviews/events; it has no student attribution.
+      const unscoped = new Set(input.limitations.filter(l => !a.manifest.limitations.includes(l)));
+      const limits = (...groups: string[][]) => [...new Set(groups.flat())].filter(l => !unscoped.has(l)).map(clean);
+      const scopeNotice = unscoped.size ? ["타인 정보가 섞일 수 있는 팀 전체 한계는 이 출력물에서 생략했습니다. 교수자에게 추가 설명을 요청하세요."] : [];
       const course = (await c.env.DB.prepare("SELECT c.name FROM courses c JOIN teams t ON t.course_id=c.id WHERE t.id=?").bind(spec.team_id).first<{ name: string }>())!;
       const value: StudentReport = studentReportSchema.parse({ runId: runId.data, studentId: studentId.data, studentDisplayName: student.displayName, courseName: course.name,
         runVersion: spec.version, artifactHash, rubricVersion: a.snapshot.rubric.rubricVersion, from: spec.from_ts, to: spec.to_ts,
-        verifiedAt: new Date(now()).toISOString(), professorConfirmedAt: finalization.confirmedAt, overview: clean(overview.summary), overviewLimitations: overview.limitations.map(clean),
+        verifiedAt: new Date(now()).toISOString(), professorConfirmedAt: finalization.confirmedAt, overview: clean(overview.summary), overviewLimitations: limits(originalOverview.limitations, overview.limitations),
         cards: finalization.assessments.filter(r => r.studentId === studentId.data).map(row => {
           const ai = scopedAssessment.assessments.find(r => r.studentId === row.studentId && r.key === row.key)!;
+          const original = a.originalAssessment.assessments.find(r => r.studentId === row.studentId && r.key === row.key)!;
           const ownEvents = [...row.evidenceIds, ...row.counterEvidenceIds].map(id => a.evidence.find(e => e.id === id)!);
           return { key: row.key, judgement: row.judgement, narrative: clean(row.narrative), reason: clean(finalization.decisions.find(d => d.studentId === row.studentId && d.key === row.key)!.reason),
-            aiJudgement: ai.judgement, aiConfidence: ai.confidence, limitations: [...new Set([...input.limitations, ...ai.limitations, ...ownEvents.flatMap(e => e.limitations)])].map(clean), aiRequestedHumanReview: row.requiresHumanReview,
+            aiJudgement: ai.judgement, aiConfidence: ai.confidence, limitations: limits(a.manifest.limitations, original.limitations, ai.limitations, ownEvents.flatMap(e => e.limitations), scopeNotice), aiRequestedHumanReview: row.requiresHumanReview,
             evidence: [...row.evidenceIds.map(id => ({ id, kind: "support" as const })), ...row.counterEvidenceIds.map(id => ({ id, kind: "counter" as const }))].map(ref => {
-              const event = a.evidence.find(e => e.id === ref.id)!; return { kind: ref.kind, summary: clean(event.summary), limitations: event.limitations.map(clean) };
+              const event = a.evidence.find(e => e.id === ref.id)!; return { kind: ref.kind, summary: clean(event.summary), limitations: limits(event.limitations) };
             }) };
         }), unresolvedIssues: a.finalReview.issues.filter(i => i.studentId === studentId.data).map(i => clean(i.instruction)),
-        reviewLimitations: [...new Set([...input.limitations, ...overview.limitations, ...scopedAssessment.assessments.filter(r => r.studentId === studentId.data).flatMap(r => r.limitations)])].map(clean),
+        reviewLimitations: limits(a.manifest.limitations, originalOverview.limitations, overview.limitations,
+          a.originalAssessment.assessments.filter(r => r.studentId === studentId.data).flatMap(r => r.limitations),
+          scopedAssessment.assessments.filter(r => r.studentId === studentId.data).flatMap(r => r.limitations), scopeNotice),
         purpose: "성적 반영을 위한 자동 점수나 순위가 아닌, 관찰 범위 안의 교수 참고·피드백 자료입니다.",
         correctionNotice: "이미 전달한 파일·종이는 자동 회수되지 않습니다. 원문 변경·철회·보관 만료 시 이전 버전의 정정·재전달 필요를 확인하세요." });
       await current();

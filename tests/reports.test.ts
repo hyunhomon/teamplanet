@@ -5,6 +5,7 @@ import { professors } from "@teamplanet/contracts/fixtures";
 import { retentionDeadline } from "@teamplanet/collection";
 import { createApp } from "../apps/api/src/index";
 import { redactReportText } from "../apps/api/src/reports";
+import { reconcileReview, withVerifiedArtifacts } from "@teamplanet/analysis";
 let f: Awaited<ReturnType<typeof resultFixture>>;
 beforeEach(async () => { f = await resultFixture(); }); afterEach(() => f.sqlite.close());
 async function confirm() {
@@ -63,4 +64,33 @@ test("C's aggregate limitations never copy another student's individual assessme
   expect(JSON.stringify(f.artifacts)).toContain(otherAssessment); await confirm();
   const report = studentReportSchema.parse(await (await f.call(path())).json());
   expect(JSON.stringify(report)).not.toContain(otherAssessment); expect(report.cards[0]!.limitations).toContain("단일 합성 관찰");
+});
+test("A's chunk-wide free-text limitations do not leak unrelated observations to a student's report", async () => {
+  f.sqlite.close(); const unrelated = "다른 참가자의 별도 묶음에서 관찰된 비공개 한계";
+  f = await resultFixture(1, undefined, unrelated); await confirm();
+  const report = studentReportSchema.parse(await (await f.call(path())).json());
+  expect(JSON.stringify(report)).not.toContain(unrelated);
+  expect(report.cards[0]!.limitations).toContain("단일 합성 관찰");
+  expect(report.reviewLimitations.some(l => l.includes("팀 전체 한계"))).toBe(true);
+});
+test("a B correction cannot erase this student's original uncertainty from the printable report", async () => {
+  const artifacts = await withVerifiedArtifacts(f.deps(), f.run.id, async (a, input) => {
+    const original = structuredClone(a.originalAssessment); original.assessments[0]!.limitations.push("원래 교수 검토가 필요한 관찰 한계");
+    const first = { ...a.firstReview, decision: "request_correction", issues: [{ id: "issue_scope", code: "context_missing", studentId: f.studentId,
+      competency: "clarity", evidenceIds: [a.evidence[0]!.id], messageIds: a.evidence[0]!.messageIds, instruction: "관찰 범위 한계를 확인하세요." }] };
+    const corrected = structuredClone(original); corrected.assessments[0]!.limitations = ["수정 후 남은 한계"];
+    const correction = { version: "analysis-stages-v1", iteration: 1, resolvedIssueIds: ["issue_scope"], assessment: corrected };
+    const history = await reconcileReview({ ...input, assessment: original, iteration: 0 }, first, correction, { ...a.finalReview, iteration: 1 });
+    return { ...a, originalAssessment: history.originalAssessment, firstReview: history.firstReview, correction: history.correction,
+      finalReview: history.finalReview!, candidate: history.candidate!, requiresHumanReview: history.requiresHumanReview };
+  });
+  f.sqlite.run("UPDATE analysis_outputs SET output_json=? WHERE run_id=?", [JSON.stringify(artifacts), f.run.id]);
+  const r = resultResponseSchema.parse(await (await f.call(`analysis-runs/${f.run.id}/assessments`)).json());
+  const body = { requestId: crypto.randomUUID(), expectedRunVersion: r.version, artifactHash: r.artifactHash,
+    decisions: r.artifacts.candidate.assessments.map(row => ({ studentId: row.studentId, key: row.key, judgement: row.judgement, narrative: "교수의 정성 피드백", reason: "원문과 한계를 검토함" })),
+    reviewedStudentIds: r.students.map(s => s.id), reviewedEvidenceIds: r.artifacts.evidence.map(e => e.id), reviewedIssueIds: ["issue_scope"], limitationsReviewed: true, finalDecisionConfirmed: true };
+  expect((await f.call(`analysis-runs/${f.run.id}/finalize`, body)).status).toBe(200);
+  const report = studentReportSchema.parse(await (await f.call(path())).json());
+  expect(report.cards[0]!.limitations).toContain("원래 교수 검토가 필요한 관찰 한계");
+  expect(report.cards[0]!.limitations).toContain("수정 후 남은 한계");
 });
