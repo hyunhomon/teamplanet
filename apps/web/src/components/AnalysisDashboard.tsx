@@ -111,7 +111,7 @@ export default function AnalysisDashboard({ professorId, onSignedOut }: { profes
           {!runningStatuses.has(run.status) && <button className="button secondary" disabled={disabled || state.stale} onClick={() => controller.newVersion()}>새 분석 버전 준비</button>}</div>
         <p className="field-help">새 버전은 기존 실행을 덮어쓰지 않습니다. 분석 후보는 교수의 최종 확정이 아닙니다.</p>
       </section>}
-      {run && ["awaiting_professor", "finalized"].includes(run.status) && <ResultViewer key={run.id} runId={run.id} onSignedOut={onSignedOut} />}
+      {run && ["awaiting_professor", "finalized"].includes(run.status) && <ResultViewer key={run.id} runId={run.id} onSignedOut={onSignedOut} onFinalized={() => void controller.poll()} />}
       <section className="analysis-panel" aria-labelledby="history-title"><h3 id="history-title">실행 이력</h3>
         {!state.runs.length && <p>이 팀의 분석 실행이 아직 없습니다.</p>}
         <ul className="analysis-history">{state.runs.map(r => <li key={r.id}><button className="text-button" disabled={disabled} onClick={() => void controller.selectRun(r.id)}>버전 {r.version} · {time(r.from)} — {time(r.to)}</button><span>{statusLabels[r.id === run?.id ? run.status : r.status]}</span></li>)}</ul>

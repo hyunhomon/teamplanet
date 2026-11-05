@@ -1,6 +1,7 @@
 import { resultResponseSchema, evidenceResponseSchema, messageContextSchema, assessmentSetSchema, apiErrorSchema,
   type ResultResponse, type MessageContext } from "@teamplanet/contracts";
 class ResultFailure extends Error {}
+export const judgementLabels = { observed_strength: "관찰된 강점", mixed: "강점·반례 혼재", needs_support: "지원 필요", insufficient_evidence: "관찰 불충분" };
 export type ResultState = { busy: boolean; error: string; result: ResultResponse | null; context: MessageContext | null;
   evidence: ReturnType<typeof evidenceResponseSchema.parse>["evidence"] | null };
 export class ResultController {

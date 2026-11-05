@@ -1,0 +1,13 @@
+# 교수 수정과 최종 확정 (#23)
+
+결과 뷰어에서 학생×실행 당시 선택 역량의 판단·서술과 각 검토/변경 사유를 작성한다. 모든 학생·근거/반례·모델 이견·한계를 검토했다는 확인은 기본 해제다. AI 원래 초안·수정본·검토 결과는 수정하지 않고 사람 판단을 `professor_finalizations`에 별도로 보존한다. AI의 사람 검토 플래그도 지우지 않고 교수 확인 기록과 구분한다.
+
+`POST /v1/analysis-runs/:id/finalize`는 `finalizeRequestSchema`를 사용한다. requestId, expectedRunVersion, artifactHash와 학생×선택 역량 전체 decisions, 검토한 학생/근거/issue ID 집합, 한계/최종판단 확인이 필요하다. 새로운 근거·미선택 역량·중복/누락·근거 없는 판정은 거부한다. 교수 서술/사유를 원문 사본으로 쓰는 것도 거부한다. 평점/순위 필드는 없다.
+
+확정 직전 현재 Slack 원문·이미지·요약/후보를 재검증한다. awaiting_professor에서만 확정하고 같은 D1 batch에서 runValidityGuard·소유권/버전/원래 출력·미확정 조건을 다시 확인한다. 확정 기록·상태 finalized·audit_events가 함께 저장되거나 전부 rollback된다. 동일 요청의 재확인은 같은 확정본을 반환하고 다른 탭/다른 요청은409다. 두 탭 중 한 확정만 살아남는다. 같은 run의 확정 수정은 제공하지 않으며 새 run을 사용한다.
+
+`GET /:id/finalization`도 현재 원문을 재검증한 뒤 공유 finalizationResponseSchema를 반환한다. 미확정이면 null이다. 타인/없음404, 충돌·미완료·원문 변경/철회/만료409, Slack 장애503이다. 장애를 삭제로 기록하거나 확정 성공으로 바꾸지 않는다. 확정 후 변경·철회는 기존 #14 epoch/validity로 확정본의 열람·출력을 차단하고 원래 감사 기록은 정리 기한까지 보존한다.
+
+0017 migration은 새 테이블과 UPDATE 금지 트리거만 추가한다. 기존 SQL·동의 이력 트리거를 보존한다. 조기 삭제·수업 종료 후 달력 3개월 purge에서 FK보다 먼저 확정 기록도 정리한다. 원문/리포트 파일을 저장하지 않는다. #31은 `withVerifiedArtifacts`와 `savedFinalization`을 조합해 status/버전/hash를 확인하고 출력 직전에도 검증해야 한다. 이미 전달한 종이/PDF를 자동 회수할 수 없다는 고지가 필요하다.
+
+실제 SQLite의 두 탭/중복/낙관적 잠금·필수 검토·상태/소유권·철회 경합·확정 후 무효화·FK/삭제·원문 복제 차단과 실제 합성 API의 브라우저 수정→확정→재조회(1 POST)를 검증했다. 로컬 D1 구버전 업그레이드에서 기존 평가·감사/동의 트리거 보존과 반복 migration을 확인했다. 실제 Slack/OpenRouter 키 없이 수행했다.

@@ -368,3 +368,9 @@ export const analysisOutputs = sqliteTable("analysis_outputs", {
   runId: text("run_id").primaryKey().references(() => analysisRuns.id), outputJson: text("output_json").notNull(),
   createdAt: integer("created_at").notNull(),
 });
+/** Immutable human decisions; AI artifacts remain unchanged. Read validity is checked against the run epoch. */
+export const professorFinalizations = sqliteTable("professor_finalizations", {
+  runId: text("run_id").primaryKey().references(() => analysisRuns.id), professorId: text("professor_id").notNull().references(() => professors.id),
+  requestId: text("request_id").notNull(), requestHash: text("request_hash").notNull(), artifactHash: text("artifact_hash").notNull(),
+  runVersion: integer("run_version").notNull(), payloadJson: text("payload_json").notNull(), confirmedAt: integer("confirmed_at").notNull(),
+}, t => [uniqueIndex("professor_finalize_request").on(t.professorId, t.requestId)]);
