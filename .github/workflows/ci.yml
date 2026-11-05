@@ -50,3 +50,9 @@ jobs:
         run: bun run queue:verify:local
       - name: Build
         run: bun run build
+      - name: Synthetic full-stack browser E2E
+        shell: bash
+        run: |
+          export E2E_CHROMIUM_EXECUTABLE="$(command -v google-chrome || command -v chromium)"
+          test -n "$E2E_CHROMIUM_EXECUTABLE"
+          bun run e2e:local

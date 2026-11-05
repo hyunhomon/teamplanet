@@ -9,6 +9,7 @@ import { eventRoutes } from "./events";
 import { lifecycleRoutes } from "./lifecycle";
 import { inquiryRoutes } from "./inquiries";
 import { analysisRoutes } from "./analysis";
+import { analysisHistoryRoutes } from "./analysis-history";
 import { resultRoutes } from "./results";
 import { finalizationRoutes } from "./finalization";
 import { reportRoutes } from "./reports";
@@ -57,6 +58,7 @@ export function createApp(authDeps: AuthDeps = defaultAuthDeps, slackFetch: Slac
   app.route("/v1", lifecycleRoutes(authDeps.now));
   app.route("/v1", inquiryRoutes(authDeps.now));
   app.route("/v1", analysisRoutes(authDeps.now, slackFetch));
+  app.route("/v1", analysisHistoryRoutes(authDeps.now));
   app.route("/v1", resultRoutes(authDeps.now, slackFetch));
   app.route("/v1", finalizationRoutes(authDeps.now, slackFetch));
   app.route("/v1", reportRoutes(authDeps.now, slackFetch));

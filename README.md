@@ -29,6 +29,7 @@
 - `docs/RESULT_VIEWER.md` 결과·반례·검토 이력과 재검증된 내부 원문 문맥
 - `docs/PROFESSOR_FINALIZATION.md` 원래 AI 보존·교수 수정/사유·동시 확정 방지
 - `docs/STUDENT_REPORTS.md` 학생별 최신 검증 리포트·개인정보 확인·인쇄/PDF
+- `docs/E2E.md` 실제 Astro/API/Queue/D1 합성 사용자 흐름·거부 시나리오와 외부 smoke 기준
 - `docs/EVIDENCE_EXTRACTION.md` A adapter·인용/이미지 검증·overlap 병합과 한계
 - `docs/INDEPENDENT_REVIEW.md` C adapter·원문 대조·수정 1회·이견 보존과 사람 검토
 - `docs/ASSESSMENT.md` B adapter·근거 원문 역추적·학생×선택 역량 검증·수정 1회와 한계
@@ -73,6 +74,8 @@ production 주소는 `https://teamplanet.cloby.co`입니다. `main` push의 **CI
 `bun install --frozen-lockfile` 후 `bun run typecheck`, `bun test`, `bun run build`로 공통 패키지와 세 앱을 검증합니다. 테스트는 OpenRouter 모의 응답과 로컬 메모리 SQLite를 사용하며 외부 API를 호출하지 않습니다.
 
 `bun run queue:verify:local`은 실제 Consumer와 로컬 Queue/D1을 격리해 정상·중복 전달 및 DLQ 이동을 검증하며 CI에서도 실행합니다. Consumer를 포함해 세 앱의 타입·빌드를 확인합니다. 배포는 단일 production에서 큐 준비 → migration → Consumer → API → 웹 순서이며 공개 큐 테스트 엔드포인트를 추가하지 않습니다.
+
+빌드 후 `bun run e2e:local`로 로그인·설정·QR·문의부터 실제 Queue 분석·교수 확정·PDF 출력까지 검증합니다. 로컬 Chromium 준비와 기존 브라우저 사용법은 [합성 E2E](docs/E2E.md)를 따릅니다. 신규 팀의 분석 프리뷰에서 전체 기간 확인이 필요하면 **기간 대화 확인**을 요청하고 완료 후 수동으로 분석을 실행합니다. 이 확인 작업은 모델을 호출하지 않습니다.
 
 DB 스키마 변경 후 `bun run db:generate`로 마이그레이션을 생성합니다. 로컬은 `bun run db:migrate:local`, production은 CD의 `bun run db:migrate`로 SQL과 동의 이력 트리거를 순서대로 적용합니다. `drizzle-kit push`만으로는 트리거가 설치되지 않습니다.
 

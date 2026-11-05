@@ -21,6 +21,8 @@ export default function AnalysisDashboard({ professorId, onSignedOut }: { profes
       setNow(Date.now());
       const run = controller.getSnapshot().run;
       if (document.visibilityState === "visible" && run && runningStatuses.has(run.status)) void controller.poll();
+      const history = controller.getSnapshot().history;
+      if (document.visibilityState === "visible" && history && ["pending", "running", "retry"].includes(history.status)) void controller.pollHistory();
     }, 5000);
     const refresh = () => { if (document.visibilityState === "visible") void controller.load(); };
     window.addEventListener("focus", refresh); document.addEventListener("visibilitychange", refresh);
@@ -84,6 +86,9 @@ export default function AnalysisDashboard({ professorId, onSignedOut }: { profes
             <div><dt>이미지 참조 / 제약</dt><dd>{preview.coverage.imageReferences} / {preview.coverage.imageLimitations}</dd></div><div><dt>기간 밖 시작 스레드 / 제외</dt><dd>{preview.coverage.threadRootsOutsidePeriod} / {preview.coverage.excluded}</dd></div></dl>
           <p>실행에 적용할 서버 선택: {preview.selection?.selectedCompetencies.map(k => competencyLabels[k]).join(" · ") ?? "미설정"}</p>
           {preview.reasons.length > 0 && <ul className="analysis-blocks">{preview.reasons.map(r => <li key={r}>{blockLabels[r]}</li>)}</ul>}
+          {preview.reasons.length > 0 && preview.reasons.every(r => ["COVERAGE_INCOMPLETE", "NO_DATA"].includes(r)) && <button className="button secondary"
+            disabled={disabled || !!state.history && ["pending", "running", "retry"].includes(state.history.status)} onClick={() => void controller.collectHistory()}>기간 대화 확인</button>}
+          {state.history && <p role="status">수집 확인: {state.history.status === "completed" ? "완료" : state.history.status === "dead" ? "중단" : "진행 중"} · {state.history.coverage === "complete" ? "전체 기간 확인" : "전체 기간 확인 전"}</p>}
           <ul className="field-help">{preview.coverage.limitations.map(l => <li key={l}>{limitationLabels[l] ?? "수집 과정에서 추가 제약이 기록됐습니다. 실행 후 교수 검토에서 한계를 확인하세요."}</li>)}</ul>
           {!fresh && <p className="form-notice">프리뷰가 1분 지났습니다. 기간 프리뷰를 다시 확인하세요.</p>}
           <button className="button primary" disabled={disabled || state.stale || !preview.allowed || !fresh || !!state.saved || !!run && runningStatuses.has(run.status)} onClick={() => void controller.create()}>이 기간 분석 실행</button>
