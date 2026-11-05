@@ -12,6 +12,7 @@ export class ResultController {
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
   private update(patch: Partial<ResultState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(fn => fn()); }
   clear() { this.revision++; this.abort?.abort(); this.update({ result: null, evidence: null, context: null, busy: false }); }
+  reject(message: string) { this.clear(); this.update({ error: message }); }
   dispose() { this.revision++; this.abort?.abort(); }
   async request<T>(path: string, schema: { parse(value: unknown): T }, signal: AbortSignal, body?: unknown): Promise<T> {
     const send = this.fetcher, response = await send(`/v1/analysis-runs/${this.runId}/${path}`, { method: body === undefined ? "GET" : "POST", signal,

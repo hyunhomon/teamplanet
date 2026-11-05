@@ -54,7 +54,7 @@ export default function ResultViewer({ runId, onSignedOut, onFinalized }: { runI
         </section>)}
       </article>)}
       <AnalysisHistory result={result} />
-      <ProfessorFinalizationForm key={`${result.runId}:${result.artifactHash}:${result.status}`} result={result} onSaved={() => { void controller.load(); onFinalized?.(); }} onSignedOut={onSignedOut} />
+      <ProfessorFinalizationForm key={`${result.runId}:${result.artifactHash}:${result.status}`} result={result} onSaved={() => { void controller.load(); onFinalized?.(); }} onSignedOut={onSignedOut} onVerificationFailed={message => controller.reject(message)} />
     </>}
     {state.evidence && <section className="result-evidence" aria-live="polite"><h4>선택한 근거</h4><p>{state.evidence.summary}</p>
       <ul>{state.evidence.limitations.map((l,i) => <li key={i}>{l}</li>)}</ul>
