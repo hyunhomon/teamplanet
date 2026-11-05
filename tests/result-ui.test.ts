@@ -1,6 +1,24 @@
 import { expect, test } from "bun:test";
 import { resultFixture } from "./helpers/result";
 import { ResultController } from "../apps/web/src/lib/results";
+import { AnalysisHistory } from "../apps/web/src/components/ResultViewer";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { resultResponseSchema } from "@teamplanet/contracts";
+
+test("review history exposes original and corrected uncertainty with student and competency attribution", async () => {
+  const f = await resultFixture();
+  try {
+    const result = resultResponseSchema.parse(await (await f.call(`analysis-runs/${f.run.id}/assessments`)).json()), a = result.artifacts;
+    a.originalAssessment.assessments[0]!.limitations = ["원래 초안에만 기록된 한계"];
+    a.firstReview.limitations = ["최초 검토에만 기록된 한계"];
+    a.correction = { version: "analysis-stages-v1", iteration: 1, resolvedIssueIds: [], assessment: structuredClone(a.originalAssessment) };
+    a.correction.assessment.overviews[0]!.limitations = ["수정 개요에만 기록된 한계"];
+    a.finalReview = { ...a.finalReview, iteration: 1, decision: "human_review", requiresHumanReview: true, limitations: ["마지막 검토 한계"] };
+    const html = renderToStaticMarkup(createElement(AnalysisHistory, { result }));
+    for (const text of ["원래 초안에만 기록된 한계", "최초 검토에만 기록된 한계", "수정 개요에만 기록된 한계", "마지막 검토 한계", "사람 검토", "합성 학생"]) expect(html).toContain(text);
+  } finally { f.sqlite.close(); }
+});
 test("viewer uses owned result/evidence/message contracts and clears stale content on revalidation failure", async () => {
   const f = await resultFixture();
   try {
