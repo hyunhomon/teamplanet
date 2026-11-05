@@ -1,4 +1,4 @@
-import { analysisDashboardSchema, analysisPreviewRequestSchema, analysisPreviewSchema, analysisRunListSchema, analysisRunResponseSchema,
+import { analysisDashboardSchema, analysisHistoryResponseSchema, type AnalysisHistory, analysisPreviewRequestSchema, analysisPreviewSchema, analysisRunListSchema, analysisRunResponseSchema,
   apiErrorSchema, createAnalysisRunSchema, runIdSchema, teamIdSchema, type AnalysisDashboard, type AnalysisPreview, type AnalysisRun } from "@teamplanet/contracts";
 type Range = { from: string; to: string; timezone: string };
 type Request = ReturnType<typeof createAnalysisRunSchema.parse>;
@@ -6,7 +6,7 @@ type Saved = { request: Request; runId: string | null };
 type Schema<T> = { safeParse(value: unknown): { success: true; data: T } | { success: false } };
 export type DashboardState = { busy: boolean; error: string; notice: string; retryAt: number; stale: boolean;
   teams: AnalysisDashboard["teams"]; teamId: string; range: Range | null; preview: AnalysisPreview | null;
-  runs: AnalysisRun[]; nextBefore: number | null; run: AnalysisRun | null; saved: Saved | null };
+  runs: AnalysisRun[]; nextBefore: number | null; run: AnalysisRun | null; saved: Saved | null; history: AnalysisHistory | null };
 export const runningStatuses = new Set(["queued", "collecting", "evidence_extraction", "assessment", "review"]);
 export const statusLabels: Record<AnalysisRun["status"], string> = {
   queued: "실행 대기", collecting: "전체 기간 수집 확인", evidence_extraction: "A · 근거 추출", assessment: "B · 선택 역량 평가", review: "C · 독립 검토",
@@ -16,7 +16,7 @@ export const statusLabels: Record<AnalysisRun["status"], string> = {
 export const blockLabels = {
   SETTINGS_REQUIRED: "수업 시작·종료일과 선택 역량을 설정하세요.", PERIOD_OUTSIDE_COURSE: "분석 기간은 수업 기간 안이어야 합니다.",
   FUTURE_PERIOD: "미래 시각은 분석할 수 없습니다.", DATA_USE_BLOCKED: "전원 동의·매핑·허용 수집 구간·자료 보관 상태를 확인하세요.",
-  COVERAGE_INCOMPLETE: "전체 기간의 수집 확인이 완료되지 않았습니다. 운영자에게 수집 보정을 요청하세요.", NO_DATA: "이 기간에 관찰할 대화가 없습니다. 기간과 수집 상태를 확인하세요.",
+  COVERAGE_INCOMPLETE: "전체 기간의 수집 확인이 필요합니다. 아래에서 기간 대화 확인을 요청하세요.", NO_DATA: "이 기간에 관찰할 대화가 없습니다. 기간과 수집 상태를 확인하세요.",
 };
 export const limitationLabels: Record<string, string> = {
   source_metadata_preview_requires_live_revalidation: "메시지 참조 기준의 프리뷰입니다. 실행 때 Slack 원문을 다시 확인합니다.",
@@ -54,10 +54,11 @@ export class DashboardController {
     const restoreSaved = !location.runId && (!location.teamId || location.teamId === saved?.request.teamId);
     this.state = { busy: false, error: "", notice: "", retryAt: 0, stale: true, teams: [], teamId: location.teamId || (restoreSaved ? saved?.request.teamId : "") || "",
       range: saved && restoreSaved ? requestRange(saved.request) : null,
-      preview: null, runs: [], nextBefore: null, run: null, saved };
+      preview: null, runs: [], nextBefore: null, run: null, saved, history: null };
     this.initialRunId = location.runId || (restoreSaved ? saved?.runId : "") || "";
   }
   private initialRunId: string;
+  private historyRequest: { id: string; teamId: string; range: Range } | null = null;
   getSnapshot = () => this.state;
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
   private update(patch: Partial<DashboardState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(fn => fn()); }
@@ -109,11 +110,11 @@ export class DashboardController {
   });
   selectTeam(teamId: string) {
     if (this.state.busy || !teamIdSchema.safeParse(teamId).success || !this.state.teams.some(t => t.team.id === teamId)) return;
-    this.initialRunId = ""; this.update({ teamId, preview: null, run: null, runs: [], range: null }); return this.load();
+    this.initialRunId = ""; this.update({ teamId, preview: null, run: null, runs: [], range: null, history: null }); return this.load();
   }
   setRange(range: Range) {
     if (this.state.busy) return;
-    this.update({ range, preview: null, error: "" });
+    this.update({ range, preview: null, error: "", history: null });
   }
   invalidatePreview() { if (!this.state.busy) this.update({ preview: null, error: "" }); }
   preview = () => this.perform(async signal => {
@@ -122,6 +123,26 @@ export class DashboardController {
     const result = await this.request("analysis-preview", analysisPreviewSchema, signal, request.data);
     if (result.teamId !== request.data.teamId || result.courseId !== this.state.teams.find(t => t.team.id === result.teamId)?.team.courseId || !sameRange(result, request.data)) throw new DashboardFailure("INVALID_RESPONSE");
     return { preview: result };
+  });
+  collectHistory = () => this.perform(async signal => {
+    if (!this.state.range || !this.state.preview || this.state.preview.reasons.some(r => !["COVERAGE_INCOMPLETE", "NO_DATA"].includes(r))) throw new DashboardFailure("CONFLICT");
+    const old = this.state.history, saved = this.historyRequest;
+    const requestId = saved && saved.teamId === this.state.teamId && sameRange(saved.range, this.state.range)
+      && (!old || !["dead", "completed"].includes(old.status)) ? saved.id : crypto.randomUUID();
+    this.historyRequest = { id: requestId, teamId: this.state.teamId, range: this.state.range };
+    const history = await this.request("analysis-history", analysisHistoryResponseSchema, signal, { teamId: this.state.teamId, ...this.state.range, requestId });
+    if (history.teamId !== this.state.teamId || history.requestId !== requestId || history.from !== this.state.range.from || history.to !== this.state.range.to) throw new DashboardFailure("INVALID_RESPONSE");
+    if (["completed", "dead"].includes(history.status)) this.historyRequest = null;
+    return { history, notice: "모델 호출 없이 허용 기간의 Slack 대화를 확인합니다." };
+  });
+  pollHistory = () => this.perform(async signal => {
+    const old = this.state.history; if (!old) return {};
+    const history = await this.request(`teams/${old.teamId}/analysis-history/${old.requestId}`, analysisHistoryResponseSchema, signal);
+    if (history.requestId !== old.requestId || history.teamId !== old.teamId || history.from !== old.from || history.to !== old.to || !this.state.range) throw new DashboardFailure("INVALID_RESPONSE");
+    if (["completed", "dead"].includes(history.status)) this.historyRequest = null;
+    const preview = await this.request("analysis-preview", analysisPreviewSchema, signal, { teamId: old.teamId, from: old.from, to: old.to, timezone: this.state.range.timezone });
+    return { history, preview, notice: history.status === "dead" || history.coverage === "failed" || history.coverage === "partial" ? "수집 확인을 완료하지 못했습니다. 동의·권한·기간을 확인하고 다시 요청하세요."
+      : history.coverage === "complete" ? "기간 대화 확인이 끝났습니다. 프리뷰를 확인한 뒤 분석을 실행하세요." : "기간 대화를 확인 중입니다." };
   });
   create = (recover = false) => this.perform(async signal => {
     let saved = this.state.saved;

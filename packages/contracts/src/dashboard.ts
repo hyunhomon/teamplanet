@@ -23,3 +23,8 @@ export const analysisRunListSchema = z.strictObject({ teamId: teamSchema.shape.i
 export type AnalysisDashboard = z.infer<typeof analysisDashboardSchema>;
 export type AnalysisPreview = z.infer<typeof analysisPreviewSchema>;
 export type AnalysisRun = z.infer<typeof analysisRunResponseSchema>;
+export const analysisHistoryRequestSchema = analysisPreviewRequestSchema.safeExtend({ requestId: z.uuidv4() });
+export const analysisHistoryResponseSchema = z.strictObject({ requestId: z.uuidv4(), teamId: teamSchema.shape.id,
+  from: dateTimeSchema, to: dateTimeSchema, status: z.enum(["pending", "running", "retry", "completed", "dead"]),
+  coverage: z.enum(["missing", "running", "complete", "partial", "failed"]), errorCode: z.string().nullable() });
+export type AnalysisHistory = z.infer<typeof analysisHistoryResponseSchema>;
