@@ -132,6 +132,46 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
 .professor-finalization textarea { display: block; width: 100%; min-height: 100px; padding: 12px; border: 1px solid #80958b; border-radius: 8px; font: inherit; font-size: 16px; margin: 8px 0 16px; }
 .professor-finalization .check-label { display: flex; align-items: flex-start; gap: 12px; line-height: 1.8; margin: 20px 0; }
 .professor-finalization input[type=checkbox] { width: 24px; height: 24px; flex-shrink: 0; }
+.student-report-page { max-width: 900px; margin: 0 auto; padding: 32px 24px; overflow-wrap: anywhere; }
+.student-report-page h1 { font-size: 28px; line-height: 1.5; font-weight: 600; margin: 16px 0; }
+.student-report-page h2 { font-size: 21px; font-weight: 600; margin: 24px 0 12px; }
+.student-report-page h3 { font-size: 16px; font-weight: 600; margin: 20px 0 8px; }
+.student-report-page p, .student-report-page li, .student-report-page dd { white-space: pre-wrap; font-size: 14px; line-height: 1.85; margin: 10px 0; }
+.student-report-page ul { list-style: disc; padding-left: 22px; }
+.report-controls { background: #eaf1e7; padding: 24px; border-radius: 12px; margin-bottom: 28px; }
+.report-controls .check-label { display: flex; gap: 12px; align-items: flex-start; line-height: 1.8; margin: 20px 0; }
+.report-controls input[type=checkbox] { width: 24px; height: 24px; flex-shrink: 0; margin-top: 4px; }
+.report-document { background: white; padding: 36px; border: 1px solid #192f2b25; border-radius: 12px; }
+.report-brand { letter-spacing: .12em; font-size: 12px; font-weight: 700; color: #23634f; }
+.report-purpose, .report-ai-note { padding: 12px; background: #f0f4ec; border-radius: 8px; }
+.report-metadata { border-top: 1px solid #192f2b40; border-bottom: 1px solid #192f2b40; padding: 12px 0; margin: 24px 0; }
+.report-metadata dt { font-size: 12px; color: #52695f; margin-top: 8px; }
+.report-card { border-top: 2px solid #23634f; margin-top: 28px; padding-top: 12px; }
+.report-judgement { font-weight: 700; }
+.report-document footer { border-top: 1px solid #192f2b40; margin-top: 28px; padding-top: 16px; }
+.report-print-guard { display: none; }
+@page { size: A4; margin: 16mm 18mm;
+  @top-left { content: "TeamPlanet - 학생 피드백"; font: 8pt "Malgun Gothic", sans-serif; color: #52695f; }
+  @bottom-right { content: counter(page) " / " counter(pages); font: 8pt sans-serif; color: #52695f; }
+}
+@media print {
+  :root, body { background: white; color: black; }
+  .student-report-page { max-width: none; padding: 0; margin: 0; }
+  .report-controls { display: none !important; }
+  .workspace-page { display: none !important; }
+  .report-document { display: none; border: 0; border-radius: 0; padding: 0; }
+  .report-print-guard { display: block; }
+  .print-authorized .report-document { display: block; }
+  .print-authorized .report-print-guard { display: none; }
+  .report-document h1 { font-size: 22pt; }
+  .report-document h2 { font-size: 15pt; break-after: avoid; }
+  .report-document h3 { font-size: 11pt; break-after: avoid; }
+  .report-document p, .report-document li, .report-document dd { font-size: 10pt; line-height: 1.65; orphans: 3; widows: 3; }
+  .report-document header, .report-metadata { break-inside: avoid; }
+  .report-card { break-inside: auto; }
+  .report-ai-note { break-inside: avoid; }
+  .report-document > section:last-of-type, .report-document footer { break-inside: avoid; }
+}
 @media (max-width: 640px) {
   .workspace-page { padding: 0 20px; }
   .site-header { padding: 24px 0; }
@@ -146,6 +186,8 @@ a, button, input { -webkit-tap-highlight-color: transparent; }
   .analysis-period { grid-template-columns: 1fr; gap: 0; }
   .analysis-metrics { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .analysis-history li { flex-direction: column; align-items: flex-start; gap: 0; }
+  .student-report-page { padding: 20px 12px; }
+  .report-document, .report-controls { padding: 20px 16px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

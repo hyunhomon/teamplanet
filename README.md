@@ -2,7 +2,7 @@
 
 팀 프로젝트의 **지정된 Slack 채널 내 전체 대화**를 수동 기록 없이 수집하여, 교수에게 **선택한 커뮤니케이션 역량별 정성 평가와 원문 근거**를 제공하는 평가 지원 도구입니다.
 
-> Astro SSR 웹과 Hono API, D1·Queue 및 GitHub Actions production CD를 사용합니다. 교수 인증·Slack/동의·참조 수집·개인 QR·문의·분석 화면과 A/B/C Queue 통합을 구현했습니다. 실제 메일·Slack·모델 연결 및 품질 검증은 운영 설정 후 #24/#25에서 수행합니다. 결과 뷰어·교수 확정·출력은 #22/#23/#31의 후속 작업입니다.
+> Astro SSR 웹과 Hono API, D1·Queue 및 GitHub Actions production CD를 사용합니다. 교수 인증·Slack/동의·참조 수집·개인 QR·문의·A/B/C Queue 분석·원문 근거 뷰어·교수 확정·학생별 출력 리포트를 구현했습니다. 실제 메일·Slack·모델 연결, 전체 E2E와 품질 검증은 #24/#25에서 수행합니다.
 
 교수 로그인 UI는 `/login`에서 실제 `/v1/auth/*` 계약을 사용합니다. 인증 API가 제공되기 전에는 서비스 준비 안내를 표시하며, 로그인 셸의 합성 응답 검증과 실제 서버 통합 범위는 [로그인 UI 문서](docs/WEB_AUTH.md)에 정리했습니다.
 
@@ -27,6 +27,8 @@
 - `docs/ANALYSIS_PIPELINE.md` 실제 A/B/C Queue 실행·정규화 결과·공급자 오류·metadata 재시도와 운영 설정
 - `docs/ANALYSIS_DASHBOARD.md` 교수 소유 팀·기간 프리뷰·멱등 실행/복원·진행 및 취소/재개
 - `docs/RESULT_VIEWER.md` 결과·반례·검토 이력과 재검증된 내부 원문 문맥
+- `docs/PROFESSOR_FINALIZATION.md` 원래 AI 보존·교수 수정/사유·동시 확정 방지
+- `docs/STUDENT_REPORTS.md` 학생별 최신 검증 리포트·개인정보 확인·인쇄/PDF
 - `docs/EVIDENCE_EXTRACTION.md` A adapter·인용/이미지 검증·overlap 병합과 한계
 - `docs/INDEPENDENT_REVIEW.md` C adapter·원문 대조·수정 1회·이견 보존과 사람 검토
 - `docs/ASSESSMENT.md` B adapter·근거 원문 역추적·학생×선택 역량 검증·수정 1회와 한계

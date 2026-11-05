@@ -44,6 +44,7 @@ export default function ResultViewer({ runId, onSignedOut, onFinalized }: { runI
       <p className="field-help">관찰한 대화의 정성적 피드백 후보입니다. 관찰 불충분은 실패·낙제가 아닙니다. 최종 판단은 교수가 합니다.</p>
       {result.artifacts.requiresHumanReview && <p className="form-notice">근거·한계·모델 이견을 확인하는 사람 검토가 필요합니다.</p>}
       {result.students.map(student => <article key={student.id} className="result-student"><h4>{student.displayName}</h4>
+        {result.status === "finalized" && <a className="button secondary" href={`/reports/print?run=${result.runId}&student=${student.id}`} target="_blank" rel="noopener noreferrer">이 학생 리포트 미리보기</a>}
         <p>{result.artifacts.candidate.overviews.find(o => o.studentId === student.id)?.summary}</p>
         <ul>{result.artifacts.candidate.overviews.find(o => o.studentId === student.id)?.limitations.map((l,i) => <li key={i}>{limitation(l)}</li>)}</ul>
         {result.artifacts.candidate.assessments.filter(row => row.studentId === student.id).map(row => <section className="result-card" key={row.key}>
