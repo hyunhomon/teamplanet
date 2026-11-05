@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type SubmitEvent } from "react";
 import { competencyLabels, finalizeRequestSchema, finalizationResponseSchema, type ResultResponse, type ProfessorFinalization } from "@teamplanet/contracts";
 import { judgementLabels } from "../lib/results";
-export default function ProfessorFinalizationForm({ result, onSaved, onSignedOut }: { result: ResultResponse; onSaved(): void; onSignedOut(): void }) {
+export default function ProfessorFinalizationForm({ result, onSaved, onSignedOut, onVerificationFailed }: { result: ResultResponse; onSaved(): void; onSignedOut(): void; onVerificationFailed(message: string): void }) {
   const [decisions, setDecisions] = useState(() => result.artifacts.candidate.assessments.map(r => ({ studentId: r.studentId, key: r.key, judgement: r.judgement, narrative: r.narrative, reason: "" })));
   const [checked, setChecked] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [saved, setSaved] = useState<ProfessorFinalization | null>(null), [requestId] = useState(() => crypto.randomUUID());
@@ -15,7 +15,7 @@ export default function ProfessorFinalizationForm({ result, onSaved, onSignedOut
       if (!response.ok) throw Error();
       const parsed = finalizationResponseSchema.parse(await response.json()); if (parsed.runId !== result.runId || !parsed.finalization) throw Error();
       if (!controller.signal.aborted) setSaved(parsed.finalization);
-    }).catch(() => { if (!controller.signal.aborted) setError("확정본을 재검증하지 못했습니다. 최신 결과를 다시 조회하세요."); });
+    }).catch(() => { if (!controller.signal.aborted) onVerificationFailed("확정본을 재검증하지 못했습니다. 최신 결과를 다시 조회하세요."); });
     return () => controller.abort();
   }, [result.runId, result.status]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; abort.current?.abort(); }; }, []);
@@ -30,11 +30,13 @@ export default function ProfessorFinalizationForm({ result, onSaved, onSignedOut
     try {
       const response = await fetch(`/v1/analysis-runs/${result.runId}/finalize`, { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed.data) });
+      if (!mounted.current || controller.signal.aborted) return;
       if (response.status === 401) { onSignedOut(); return; }
-      if (!response.ok) { setChecked(false); setError(response.status === 503 ? "원문 검증 장애로 확정을 보류했습니다. 다시 조회하세요." : "버전 충돌·필수 검토 누락·근거 변경으로 확정하지 못했습니다. 최신 결과를 다시 조회하세요."); return; }
+      if (!response.ok) { onVerificationFailed(response.status === 503 ? "원문 검증 장애로 확정을 보류했습니다. 다시 조회하세요." : "버전 충돌·필수 검토 누락·근거 변경으로 확정하지 못했습니다. 최신 결과를 다시 조회하세요."); return; }
       const confirmed = finalizationResponseSchema.parse(await response.json()); if (confirmed.runId !== result.runId || !confirmed.finalization) throw Error();
+      if (!mounted.current || controller.signal.aborted) return;
       setSaved(confirmed.finalization); onSaved();
-    } catch { if (mounted.current) setError("응답을 확인하지 못했습니다. 결과를 다시 조회하거나 같은 요청으로 재확인하세요."); }
+    } catch { if (mounted.current) onVerificationFailed("응답을 확인하지 못했습니다. 최신 결과를 다시 조회해 확정 여부를 확인하세요."); }
     finally { clearTimeout(timeout); inFlight.current = false; if (mounted.current) setBusy(false); }
   };
   return <section className="professor-finalization"><h4>교수 최종 검토·확정</h4>
