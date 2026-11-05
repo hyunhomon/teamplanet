@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { competencyLabels, runIdSchema, studentIdSchema, studentReportSchema, type StudentReport } from "@teamplanet/contracts";
+import { competencyLabels, studentReportSchema, type StudentReport } from "@teamplanet/contracts";
 import { judgementLabels } from "../lib/results";
 import { limitationLabels } from "../lib/analysis-dashboard";
+import { readReportLocation, reportLocationState } from "../lib/report-location";
 const date = (iso: string) => new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
 const limit = (text: string) => limitationLabels[text] ?? text;
 export default function StudentReportPage() {
-  const [location] = useState(() => {
-    const params = new URLSearchParams(window.location.search), run = runIdSchema.safeParse(params.get("run")), student = studentIdSchema.safeParse(params.get("student"));
-    return run.success && student.success ? { run: run.data, student: student.data } : null;
-  });
+  const [location] = useState(() => readReportLocation(window.location.search, window.history.state));
+  const cleanLocation = () => window.history.replaceState(reportLocationState(window.history.state, location), "", "/reports/print");
   const [report, setReport] = useState<StudentReport | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [checked, setChecked] = useState(false), [authorized, setAuthorized] = useState(false);
   const abort = useRef<AbortController | null>(null), pending = useRef(false), mounted = useRef(true), approvedAt = useRef(0);
@@ -36,20 +35,20 @@ export default function StudentReportPage() {
       if (printing) {
         approvedAt.current = Date.now(); flushSync(() => { setReport(next); setAuthorized(true); });
         // Browser headers must not include internal student/run IDs.
-        window.history.replaceState(null, "", "/reports/print");
+        cleanLocation();
         window.print();
       } else setReport(next);
     } catch { if (mounted.current) { setReport(null); setChecked(false); setError("검증된 리포트를 가져오지 못했습니다. 새로 확인하세요."); } }
     finally { clearTimeout(timeout); pending.current = false; if (mounted.current) setBusy(false); }
   }
   useEffect(() => {
-    mounted.current = true; void read();
+    mounted.current = true; cleanLocation(); void read();
     const before = () => {
-      window.history.replaceState(null, "", "/reports/print");
+      cleanLocation();
       if (!approvedAt.current || Date.now() - approvedAt.current > 20000) flushSync(() => setAuthorized(false));
     };
     const after = () => { approvedAt.current = 0; setAuthorized(false); setChecked(false); setReport(null);
-      if (location) window.history.replaceState(null, "", `/reports/print?run=${location.run}&student=${location.student}`); };
+      cleanLocation(); };
     const hidden = () => { if (document.visibilityState === "hidden" && !approvedAt.current) { abort.current?.abort(); setReport(null); setChecked(false); } };
     window.addEventListener("beforeprint", before); window.addEventListener("afterprint", after); document.addEventListener("visibilitychange", hidden);
     return () => { mounted.current = false; abort.current?.abort(); window.removeEventListener("beforeprint", before); window.removeEventListener("afterprint", after); document.removeEventListener("visibilitychange", hidden); };
