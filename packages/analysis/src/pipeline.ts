@@ -2,7 +2,7 @@ import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types"
 import { analysisArtifactsSchema, analysisSnapshotSchema, assessmentInputSchema, assessmentStageDataSchema, chunkPlanSchema,
   evidenceStageDataSchema, manifestHeaderSchema, pipelineMetadataSchema, reviewInputSchema, reviewStageDataSchema,
   stageReceiptSchema, jobKey, assertAnalysisTransition, type AnalysisArtifacts, type AnalysisSnapshot, type Part, type QueueJob, type StageName } from "@teamplanet/contracts";
-import { runValidityGuard, SourceUnavailable, type ImageDeps } from "@teamplanet/collection";
+import { runValidityGuard, invalidateTeam, SourceUnavailable, type ImageDeps } from "@teamplanet/collection";
 import { modelProfile, type ModelRole } from "@teamplanet/ai-core";
 import { JobError, LeaseLost, type JobContext, type JobErrorCode } from "@teamplanet/queue";
 import { analysisId } from "./planner";
@@ -273,15 +273,29 @@ export async function processAnalysisStage(deps: PipelineDeps, value: Extract<Qu
 }
 
 /** The result is exposed only after current Slack revalidation; an outage is never reported as a deletion. */
-export async function readRunArtifacts(deps: ImageDeps, runId: string): Promise<AnalysisArtifacts> {
+export async function withVerifiedArtifacts<T>(deps: ImageDeps, runId: string,
+  use: (output: AnalysisArtifacts, input: ReturnType<typeof assessmentInputSchema.parse>, spec: Spec, current: () => Promise<void>) => Promise<T>): Promise<T> {
   const spec = await loadSpec(deps.db, runId);
   if (!spec || !["awaiting_professor", "finalized"].includes(spec.status)) throw new JobError("STAGE_INVALID", false);
   const row = await deps.db.prepare("SELECT output_json FROM analysis_outputs WHERE run_id = ?").bind(runId).first<{ output_json: string }>();
   if (!row) throw new JobError("STAGE_INVALID", false);
-  return withRunInput(deps, spec, async (_input, current) => {
-    const output = analysisArtifactsSchema.parse(JSON.parse(row.output_json));
-    await current(); return output;
+  return withRunInput(deps, spec, async (input, current) => {
+    let output: AnalysisArtifacts;
+    try {
+    output = analysisArtifactsSchema.parse(JSON.parse(row.output_json));
+    const history = output.correction
+      ? await reconcileReview({ ...input, assessment: output.originalAssessment, iteration: 0 }, output.firstReview, output.correction, output.finalReview)
+      : await reconcileReview({ ...input, assessment: output.originalAssessment, iteration: 0 }, output.firstReview);
+    if (output.runId !== runId || JSON.stringify(output.snapshot) !== JSON.stringify(analysisSnapshotSchema.parse(JSON.parse(spec.snapshot_json)))
+      || JSON.stringify(output.manifest) !== JSON.stringify(manifestHeaderSchema.parse(JSON.parse(spec.manifest_json!)))
+      || JSON.stringify(output.evidence) !== JSON.stringify(input.evidence) || JSON.stringify(output.candidate) !== JSON.stringify(history.candidate)
+      || JSON.stringify(output.finalReview) !== JSON.stringify(history.finalReview) || output.requiresHumanReview !== history.requiresHumanReview) {
+      throw new Error("SUMMARY_MISMATCH");
+    }
+    } catch { await invalidateTeam(deps.db, spec.team_id, "summary_mismatch", deps.now()).run(); throw new JobError("DATA_INVALIDATED", false); }
+    await current(); return use(output, input, spec, current);
   });
 }
+export const readRunArtifacts = (deps: ImageDeps, runId: string) => withVerifiedArtifacts(deps, runId, async output => output);
 
 export const prepareAnalysis = (deps: ImageDeps, runId: string, context: JobContext) => withHeartbeat(context, current => prepareRun(deps, runId, current));
