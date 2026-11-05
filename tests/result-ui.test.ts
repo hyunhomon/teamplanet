@@ -4,7 +4,7 @@ import { ResultController } from "../apps/web/src/lib/results";
 test("viewer uses owned result/evidence/message contracts and clears stale content on revalidation failure", async () => {
   const f = await resultFixture();
   try {
-    const controller = new ResultController(f.run.id, () => {}, ((url, init) => f.app.request(`https://synthetic${url}`, init, f.env)) as unknown as typeof fetch);
+    const controller = new ResultController(f.run.id, () => {}, ((url: string | URL | Request, init?: RequestInit) => f.app.request(`https://synthetic${url}`, init, f.env)) as unknown as typeof fetch);
     await controller.load(); expect(controller.getSnapshot().result?.artifacts.candidate.assessments).toHaveLength(1);
     await controller.openEvidence(f.artifacts.evidence[0]!.id); await controller.openMessage(f.artifacts.evidence[0]!.messageIds[0]!);
     expect(controller.getSnapshot().context?.messages[0]!.text).toBe(f.text);
