@@ -1,0 +1,8 @@
+---
+import StudentReportPage from "../../components/StudentReport";
+import "../../styles/global.css";
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+---
+<!doctype html><html lang="ko"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="robots" content="noindex,nofollow" /><title>TeamPlanet 학생 피드백</title></head>
+<body><StudentReportPage client:only="react"><p slot="fallback">교수 권한과 현재 근거를 확인하고 있습니다.</p></StudentReportPage><noscript>교수 권한·원문 검증을 위해 JavaScript를 켜 주세요. 검증 전 출력할 수 없습니다.</noscript></body></html>
