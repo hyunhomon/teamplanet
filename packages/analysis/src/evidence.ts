@@ -11,7 +11,7 @@ export class EvidenceError extends Error {
     readonly retryable = false, readonly billing?: BillingBlock, readonly generationId?: string, readonly retryAfterSeconds?: number,
     readonly outcomeUnknown = false) { super(code); }
 }
-export type EvidenceReceipt = { generationId: string; model: string; provider: "DeepInfra"; requestedProvider: "deepinfra/bf16"; promptVersion: typeof evidencePromptVersion };
+export type EvidenceReceipt = { generationId: string; model: string; resolvedModel?: typeof modelProfile.canonicalModel; provider: "DeepInfra"; requestedProvider: "deepinfra/bf16"; promptVersion: typeof evidencePromptVersion };
 export type EvidenceChunkResult = { runId: string; chunkId: string; processedPartIds: string[]; events: NormalizedEvidence[]; limitations: string[];
   missingImageIds: string[]; receipt: EvidenceReceipt };
 export type EvidenceModelDeps = {
@@ -59,6 +59,10 @@ function modelMessages(input: EvidenceInput) {
       { type: "image_url", image_url: { url: image.dataUrl } }]),
   ] }];
 }
+// A catalog-confirmed identity for the pinned alias, not a prefix match or a model fallback.
+function matchesModel(reported: unknown, requested: string) {
+  return reported === requested || requested === modelProfile.model && reported === modelProfile.canonicalModel;
+}
 /** Metadata only. Never call the separate stored-prompt/completion endpoint. */
 export async function verifyEvidenceGeneration(deps: EvidenceModelDeps, generationId: string, expectedModel: string): Promise<EvidenceReceipt> {
   if (!/^gen-[A-Za-z0-9_-]{1,150}$/.test(generationId)) throw new EvidenceError("MODEL_INVALID");
@@ -69,11 +73,12 @@ export async function verifyEvidenceGeneration(deps: EvidenceModelDeps, generati
   catch { throw new EvidenceError("PROVIDER_RECEIPT_UNAVAILABLE", true, undefined, generationId); }
   if (response.status >= 300 && response.status < 400) { await response.body?.cancel(); throw new EvidenceError("PROVIDER_POLICY", false, undefined, generationId); }
   const body: any = response.ok ? await response.json().catch(() => null) : null;
-  if (!body?.data || body.data.id !== generationId || body.data.model !== expectedModel || body.data.provider_name !== "DeepInfra") {
+  if (!body?.data || body.data.id !== generationId || !matchesModel(body.data.model, expectedModel) || body.data.provider_name !== "DeepInfra") {
     if (body?.data) throw new EvidenceError("PROVIDER_POLICY", false, undefined, generationId);
     throw new EvidenceError("PROVIDER_RECEIPT_UNAVAILABLE", true, undefined, generationId);
   }
-  return { generationId, model: expectedModel, provider: "DeepInfra", requestedProvider: modelProfile.provider, promptVersion: evidencePromptVersion };
+  return { generationId, model: expectedModel, ...(body.data.model === modelProfile.canonicalModel ? { resolvedModel: modelProfile.canonicalModel } : {}),
+    provider: "DeepInfra", requestedProvider: modelProfile.provider, promptVersion: evidencePromptVersion };
 }
 /** One pinned structured call shared by the A and B roles; returns unparsed content. No internal paid retry. */
 export async function requestStage(deps: EvidenceModelDeps, messages: Array<Record<string, unknown>>, name: string, schema: Record<string, unknown>) {
@@ -99,7 +104,7 @@ export async function requestStage(deps: EvidenceModelDeps, messages: Array<Reco
     throw new EvidenceError(status === 401 ? "PROVIDER_AUTH" : status === 403 ? "PROVIDER_POLICY" : status === 429 ? "RATE_LIMITED" : "UPSTREAM_UNAVAILABLE", status === 429 || status >= 500 || status === 200, undefined, undefined, retryAfter);
   }
   const data = response.data as any, choice = data?.choices?.[0];
-  if (data?.model !== deps.modelId || !/^gen-[A-Za-z0-9_-]{1,150}$/.test(data?.id ?? "")) throw new EvidenceError("PROVIDER_POLICY");
+  if (!matchesModel(data?.model, deps.modelId) || !/^gen-[A-Za-z0-9_-]{1,150}$/.test(data?.id ?? "")) throw new EvidenceError("PROVIDER_POLICY");
   if (choice?.finish_reason === "length") throw new EvidenceError("CONTEXT_LIMIT");
   if (data.choices?.length !== 1 || choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string" || choice.message.content.length > 1048576) throw new EvidenceError("MODEL_INVALID");
   return { generationId: data.id as string, content: choice.message.content as string };

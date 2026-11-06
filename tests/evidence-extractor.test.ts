@@ -39,6 +39,35 @@ test("Korean evidence uses pinned ZDR schema request; quotes become hashes and a
   expect(body.response_format.json_schema.strict).toBe(true); expect(body.messages[0].role).toBe("system");
   expect(f.calls[1]!.url).toContain("/generation?id=gen-synthetic"); expect(f.calls[1]!.url).not.toContain("content");
 });
+test("the pinned alias accepts its exact catalog canonical identity and records the resolved receipt model", async () => {
+  const f = fixture();
+  f.chat(() => Response.json({ id: "gen-synthetic", model: modelProfile.canonicalModel,
+    choices: [{ finish_reason: "stop", message: { content: JSON.stringify(evidenceOutputFixture) } }] }));
+  f.metadata(() => Response.json({ data: { id: "gen-synthetic", model: modelProfile.canonicalModel, provider_name: "DeepInfra" } }));
+  const output = await extractEvidence(f.deps, evidenceInputFixture, allowed);
+  expect(output.receipt).toMatchObject({ model: modelProfile.model, resolvedModel: modelProfile.canonicalModel, provider: "DeepInfra" });
+  expect(JSON.parse(f.calls[0]!.init.body as string).model).toBe(modelProfile.model);
+  expect(f.calls).toHaveLength(2);
+});
+test("canonical receipt handling still refuses other builds, models, generations and providers", async () => {
+  for (const override of [{ model: "qwen/qwen3.5-9b-20990101" }, { model: "other/model" },
+    { id: "gen-different" }, { provider_name: "Other" }]) {
+    const f = fixture();
+    f.metadata(() => Response.json({ data: { id: "gen-synthetic", model: modelProfile.canonicalModel, provider_name: "DeepInfra", ...override } }));
+    await expect(verifyEvidenceGeneration(f.deps, "gen-synthetic", modelProfile.model)).rejects.toThrow("PROVIDER_POLICY");
+    expect(f.calls).toHaveLength(1);
+  }
+  const f = fixture();
+  f.metadata(() => Response.json({ data: { id: "gen-synthetic", model: modelProfile.canonicalModel, provider_name: "DeepInfra" } }));
+  await expect(verifyEvidenceGeneration(f.deps, "gen-synthetic", "other/model")).rejects.toThrow("PROVIDER_POLICY");
+});
+test("an unapproved canonical completion is rejected before a receipt lookup", async () => {
+  const f = fixture();
+  f.chat(() => Response.json({ id: "gen-synthetic", model: "qwen/qwen3.5-9b-20990101",
+    choices: [{ finish_reason: "stop", message: { content: JSON.stringify(evidenceOutputFixture) } }] }));
+  await expect(extractEvidence(f.deps, evidenceInputFixture, allowed)).rejects.toThrow("PROVIDER_POLICY");
+  expect(f.calls).toHaveLength(1);
+});
 test("fake quote, ID, actor, unselected key, missing coverage, private inference and source-copy summary fail", async () => {
   for (const raw of [analysisFailureFixtures.fakeCitation, analysisFailureFixtures.fakeActor,
     { ...evidenceOutputFixture, processedPartIds: [] },

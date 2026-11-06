@@ -14,7 +14,8 @@ const chunk = (kind: string, bytes: Uint8Array) => {
 const header=new Uint8Array(13);new DataView(header.buffer).setUint32(0,1);new DataView(header.buffer).setUint32(4,1);header[8]=8;header[9]=6;
 export const image=new Uint8Array([137,80,78,71,13,10,26,10,...chunk("IHDR",header),...chunk("IDAT",deflateSync(new Uint8Array([0,0,0,0,255]))),...chunk("IEND",new Uint8Array())]);
 export function syntheticProvider() {
-  const origin = Date.parse("2026-11-05T00:00:00.000Z");
+  // Chromium's cookie expiry uses the real clock, not the injected page Date.now.
+  const origin = Math.floor(Date.now() / 60000) * 60000;
   const state = { now: origin, origin, code: "", mailCount: 0, messageAt: origin+10000, enabled: false, edited: false, deleted: false, outage: false,
     missingPage: false, unknownMember: false, modelStatus: 0, modelCalls: [] as string[], imageCalls: 0, receiptCalls: 0, unexpected: [] as string[], correction: false };
   const text = "합성 E2E 원문: 프로젝트 조건을 설명하고 도식의 변경 범위를 공유합니다.";

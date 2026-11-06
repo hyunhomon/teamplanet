@@ -15,6 +15,8 @@ bun run e2e:local
 
 2026-11-05 [PR #56 CI](https://github.com/hyunhomon/teamplanet/actions/runs/41962062606) 실측은 전체 checks **135초(2분15초)**, 새 브라우저 E2E 단계 **48초**다. 기존 [main CI](https://github.com/hyunhomon/teamplanet/actions/runs/41954615183)는94초였다. 이 실행 간 전체 차이는41초이며 runner/설치/테스트 시간 변동을 포함하므로 고정된 성능 보장으로 해석하지 않는다. Windows 로컬 native E2E는 약74~78초였다. 두 환경 모두 실제 검사 성공이며 건너뛴 항목이 없다.
 
+테스트 시계는 매 실행의 실제 벽시계를 분 단위로 맞춘 뒤 고정하고, 시나리오에서 명시적으로 증가시킨다. UI 서울 시각·API 구간·합성 메시지는 같은 기준에서 계산한다. 브라우저 쿠키 엔진은 페이지의 `Date.now` 주입과 별도로 실제 만료 시각을 검사하므로 특정 과거 날짜를 고정하면 로그인 쿠키가 즉시 버려진다. 테스트에서도 실제 Secure/HttpOnly 쿠키를 사용하며 만료 검사를 우회하지 않는다.
+
 ## 실제로 실행하는 경계
 
 `verify-e2e-local.ts`는 **빌드된 Astro SSR·정적 assets → 내부 API service binding → production Hono 라우트/세션/소유권/메일 adapter → 실제 로컬 D1·Queue → production Consumer handlers/lease runner → 실제 결과/확정/출력 UI**를 연결한다. 합성 브라우저가 설정/평가 DTO를 대신 만들어 반환하지 않는다. 초기 SQL은 운영자가 등록해야 하는 합성 교수 2명과 동의 정책뿐이다. 수업·팀·학생·동의·수집 구간·coverage·분석/평가/확정은 실제 앱 경로로 생성한다.

@@ -5,6 +5,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { join } from 'node:path';
 import { identity, bindings, type syntheticProvider } from './provider';
 export async function runBrowserJourney({browser,base,db,provider,dir,restart}:{browser:Browser;base:string;db:D1Database;provider:ReturnType<typeof syntheticProvider>;dir:string;restart():Promise<void>}) {
+ const periodFrom=new Date(provider.state.origin).toISOString(),periodTo=new Date(provider.state.origin+60000).toISOString();
+ const seoulMinute=(iso:string)=>new Date(Date.parse(iso)+9*3600000).toISOString().slice(0,16);
  const context=await browser.newContext({viewport:{width:1280,height:900}}),errors:string[]=[];
  await context.addInitScript(at=>{Date.now=()=>at;},provider.state.origin);
  const page=await context.newPage(),origin=new URL(base).origin;
@@ -58,7 +60,7 @@ export async function runBrowserJourney({browser,base,db,provider,dir,restart}:{
   await page.getByLabel('접수 후 답변 기한·자동 삭제 일수 n',{exact:true}).fill('2');await page.getByRole('button',{name:'문의 기한 저장',exact:true}).click();
   await studentPage.getByRole('link',{name:'본인 웹 문의·답변',exact:true}).click();await studentPage.getByLabel('문의 내용',{exact:true}).fill('합성 문의: 피드백 전달 방법을 확인합니다.');await studentPage.getByRole('button',{name:'문의 접수',exact:true}).click();await studentPage.getByText(/접수했습니다/).waitFor();
   await page.getByRole('button',{name:'최신 문의 조회',exact:true}).click();await page.getByLabel('답변',{exact:true}).fill('합성 답변: 최신 리포트로 안내합니다.');await page.getByRole('button',{name:'답변 저장',exact:true}).click();await studentPage.getByRole('button',{name:'최신 상태 조회',exact:true}).click();await studentPage.getByText(/합성 답변: 최신 리포트로 안내합니다/).waitFor();await anonymous.close();
-  await page.getByRole('link',{name:'팀 분석',exact:true}).click();await page.getByLabel('시작 시각',{exact:true}).fill('2026-11-05T09:00');await page.getByLabel('종료 시각',{exact:true}).fill('2026-11-05T09:01');await page.getByRole('button',{name:'기간 프리뷰 확인',exact:true}).click();await page.getByRole('button',{name:'기간 대화 확인',exact:true}).click();
+  await page.getByRole('link',{name:'팀 분석',exact:true}).click();await page.getByLabel('시작 시각',{exact:true}).fill(seoulMinute(periodFrom));await page.getByLabel('종료 시각',{exact:true}).fill(seoulMinute(periodTo));await page.getByRole('button',{name:'기간 프리뷰 확인',exact:true}).click();await page.getByRole('button',{name:'기간 대화 확인',exact:true}).click();
   await wait('history coverage',async()=>Boolean(await db.prepare("SELECT 1 FROM collection_coverage WHERE team_id=? AND status='complete'").bind(team.id).first()));
   await page.getByRole('button',{name:'이 기간 분석 실행',exact:true}).click();await wait('A/B/C Queue',async()=>Boolean(await db.prepare("SELECT 1 FROM analysis_runs WHERE team_id=? AND status='awaiting_professor'").bind(team.id).first()));
   await page.getByRole('heading',{name:'결과와 원문 근거',exact:true}).waitFor();const run:any=await db.prepare('SELECT id FROM analysis_runs WHERE team_id=?').bind(team.id).first();const artifacts=await api(`analysis-runs/${run.id}/artifacts`);assert.equal(artifacts.candidate.assessments.length,1);assert.ok(provider.state.imageCalls>0);
@@ -70,7 +72,7 @@ export async function runBrowserJourney({browser,base,db,provider,dir,restart}:{
   const original=await api(`analysis-runs/${run.id}/assessments`);assert.equal(original.status,'finalized');
   await api(`courses/${course.id}/rubric`,'PUT',{rubricVersion:'communication-v1',selectedCompetencies:['clarity','information_sharing','feedback_alignment','decision_execution']});
   provider.state.correction=true;
-  const range={teamId:team.id,from:'2026-11-05T00:00:00.000Z',to:'2026-11-05T00:01:00.000Z',timezone:'Asia/Seoul'};
+  const range={teamId:team.id,from:periodFrom,to:periodTo,timezone:'Asia/Seoul'};
   const next=await api('analysis-runs','POST',{...range,idempotencyKey:crypto.randomUUID()},202);
   await wait('four competencies and correction loop',async()=>(await db.prepare('SELECT status FROM analysis_runs WHERE id=?').bind(next.id).first<any>())?.status==='awaiting_professor');
   const multi=await api(`analysis-runs/${next.id}/assessments`);assert.equal(multi.artifacts.candidate.assessments.length,4);assert.ok(multi.artifacts.correction);
