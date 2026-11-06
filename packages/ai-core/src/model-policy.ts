@@ -2,6 +2,8 @@
 export const modelProfile = {
   version: "qwen-pilot-v1",
   model: "qwen/qwen3.5-9b",
+  // Exact canonical_slug for this alias in OpenRouter's public catalog, checked 2026-11-06.
+  canonicalModel: "qwen/qwen3.5-9b-20260310",
   provider: "deepinfra/bf16",
   promptVersion: "communication-prompts-v1",
   maxAssessmentCorrections: 1,

@@ -4,7 +4,8 @@ import { analysisErrorSchema, analysisSnapshotSchema, assessmentOutputSchema, co
 
 export const stageNameSchema = z.enum(["evidence_extraction", "assessment", "review"]);
 export const stageReceiptSchema = z.strictObject({ generationId: z.string().regex(/^gen-[A-Za-z0-9_-]{1,150}$/),
-  model: z.literal("qwen/qwen3.5-9b"), provider: z.literal("DeepInfra"), requestedProvider: z.literal("deepinfra/bf16"), promptVersion: z.literal("communication-prompts-v1") });
+  model: z.literal("qwen/qwen3.5-9b"), resolvedModel: z.literal("qwen/qwen3.5-9b-20260310").optional(),
+  provider: z.literal("DeepInfra"), requestedProvider: z.literal("deepinfra/bf16"), promptVersion: z.literal("communication-prompts-v1") });
 export const evidenceStageDataSchema = z.strictObject({ runId: runIdSchema, chunkId: z.string().regex(/^chunk_[0-9]+$/),
   processedPartIds: z.array(z.string()), events: z.array(normalizedEvidenceSchema), limitations: z.array(z.string()), missingImageIds: z.array(z.string()) });
 export const assessmentStageDataSchema = z.strictObject({ runId: runIdSchema, iteration: z.union([z.literal(0), z.literal(1)]),

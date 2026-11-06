@@ -18,12 +18,14 @@ let status: number, limitSource: string, networkFailure: boolean, revokeAt: stri
 let send: (url: string, init: RequestInit) => Promise<Response>;
 let key: string | undefined;
 let quiet: boolean;
+let canonicalReceipt: boolean;
 let cancelAt: string | null, inputs: { name: string; input: any; wire: string }[];
 const configured = { evidence: "qwen/qwen3.5-9b", assessor: "qwen/qwen3.5-9b", reviewer: "qwen/qwen3.5-9b" };
 const roles = new Map<string, string>();
 beforeEach(async () => {
   f = await collectionFixture(); clock = f.now(); professor = f.professor; work = []; dead = []; paid = []; receipts = [];
   correction = false; quiet = false; receiptOutage = 0; failStage = null; status = 503; limitSource = "openrouter_credits"; networkFailure = false; revokeAt = null; cancelAt = null; inputs = []; key = "synthetic-key"; roles.clear();
+  canonicalReceipt = false;
   f.sqlite.run("INSERT INTO course_rubric_settings VALUES (?, 'communication-v1', '[\"clarity\"]', 1)", [f.course.id]);
   f.sqlite.run("INSERT INTO collection_coverage (request_id,team_id,from_ms,to_ms,status,started_at,updated_at) VALUES (?,?,?,?,'complete',?,?)", [crypto.randomUUID(), f.teamId, f.start, f.start + 200000, clock, clock]);
   send = async () => Response.json({ ok: true, messages: [{ ts: f.slackTs, user: f.userId, text: f.text }], has_more: false });
@@ -43,7 +45,7 @@ const fetcher = async (url: string, init: RequestInit) => {
   if (url.includes("/generation?")) {
     const generation = new URL(url).searchParams.get("id")!; receipts.push(generation);
     if (receiptOutage-- > 0) return Response.json({ error: "synthetic" }, { status: 503 });
-    return Response.json({ data: { id: generation, model: configured.evidence, provider_name: "DeepInfra" } });
+    return Response.json({ data: { id: generation, model: canonicalReceipt ? "qwen/qwen3.5-9b-20260310" : configured.evidence, provider_name: "DeepInfra" } });
   }
   const request = JSON.parse(init.body as string), name: string = request.response_format.json_schema.name;
   paid.push(name); const generation = `gen-synthetic-${paid.length}`; roles.set(generation, name);
@@ -133,6 +135,16 @@ test("observed conversation without usable evidence becomes an insufficient-evid
   expect(output.candidate.assessments[0]).toMatchObject({ judgement: "insufficient_evidence", requiresHumanReview: true });
 });
 
+test("canonical metadata recovery promotes the saved response without repeating paid A/B/C calls", async () => {
+  canonicalReceipt = true; receiptOutage = 1;
+  const run = await create(); await drain();
+  const artifacts = await readRunArtifacts(imageDeps(), run.id);
+  expect(artifacts.receipts).toHaveLength(3);
+  expect(artifacts.receipts.every(r => r.model === configured.evidence && r.resolvedModel === "qwen/qwen3.5-9b-20260310")).toBe(true);
+  expect(paid).toHaveLength(3);
+  expect(receipts.filter(id => id === "gen-synthetic-1")).toHaveLength(2);
+  expect((await (await call(`/analysis-runs/${run.id}`)).json()).status).toBe("awaiting_professor");
+});
 test("a missing provider receipt retries metadata only, never the paid completion", async () => {
   receiptOutage = 1; const run = await create(); await drain();
   expect((await readRunArtifacts(imageDeps(), run.id)).receipts).toHaveLength(3);

@@ -10,6 +10,8 @@
 
 401 인증/403 정책/429 rate limit/5xx·네트워크 장애/실제402 billing을 분리한다. 402는 기존 `parseOpenRouter402` 분류와 Retry-After를 보존한다. 원시 provider 본문·키·원문은 에러/로그/Queue로 보내지 않는다. `EvidenceError`는 고정 코드 중심이며 `MODEL_INVALID`, `CONTEXT_LIMIT`, `DATA_INVALIDATED`도 구분한다. 중단/철회 뒤 이전 입력을 재사용하지 않는다.
 
+요청 별칭 `qwen/qwen3.5-9b`와 같은 모델의 정식 식별자 `qwen/qwen3.5-9b-20260310`을 Chat 응답·generation metadata에서 인정한다. 2026-11-06 [공식 모델 카탈로그](https://openrouter.ai/api/v1/models)의 해당 항목 `id`/`canonical_slug`를 확인한 정확한 쌍이다. 날짜/prefix 패턴이나 임의 모델은 허용하지 않는다. 정식 식별자를 받은 receipt는 기존 `model`에 요청 별칭을 유지하고 선택 필드 `resolvedModel`에 실제 확인한 식별자를 기록한다. DeepInfra 확인과 BF16/ZDR·fallback 금지, 보존된 응답의 metadata-only 복구는 그대로 유지한다.
+
 ## 원본과 주장 경계
 
 모든 primary part가 처리 목록에 정확히 한 번 있어야 한다. 메시지 ID/학생/태그/인용 offset·문자열/이미지 ID·행위자를 #16 validator로 대조한다. 자기 보고는 그 발화의 증거이며 외부 작업 완료의 증명이 아니다. 원문에 없는 외부 행동 단어, 성격·사적 동기·활동량 대리 판단과 원문 복제 요약의 일부 패턴은 추가 거부한다. 이 언어 검사는 완전한 의미 판별기가 아니다. 모든 생성 해석은 `model_interpretation_requires_independent_review`와 requiresHumanReview로 전달하고 실제 타당성 검증/교수 판단을 대체하지 않는다. 허위 원문/인용/귀속을 review 플래그로 우회하지 않는다.
