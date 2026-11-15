@@ -1,5 +1,7 @@
 # 합성 전체 흐름 검증 (#24)
 
+개발 서버의 첫 SSR 요청 회귀는 `bun run dev:verify:cold`로 확인한다. Node24에서 실행마다 별도의 빈 Astro/Vite cache를 만들고, HTTP 준비용 요청이나 실패 재시도 없이 `/login`·`/workspace`·`/consent/confirm`의 첫 응답이 200과 실제 SSR island인지 검사한 뒤 서버를 종료한다. 협업자의 기존 cache/DB를 삭제하거나 실제 외부 서비스에 요청하지 않는다. `@teamplanet/contracts`의 런타임 의존성 `zod`는 dev 시작 시 미리 최적화해 첫 SSR 중 의존성 재발견으로 Worker가 reload되는 것을 피한다. Cloudflare adapter가 이 include를 서버 환경에도 전달하며 React dedupe는 기존 React integration을 따른다. 이 검사는 개발 모드 회귀이고 아래 실제 로컬 API/브라우저 전체 흐름 검사를 대체하지 않는다.
+
 Node.js 24와 Bun 1.3.14에서 새 checkout을 다음 순서로 검증한다.
 
 ```sh

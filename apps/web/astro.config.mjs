@@ -8,5 +8,10 @@ export default defineConfig({
   output: "server",
   adapter: cloudflare({ imageService: "passthrough" }),
   integrations: [react()],
-  vite: { plugins: [tailwindcss()] },
+  vite: {
+    plugins: [tailwindcss()],
+    // contracts is linked source; discover its runtime dependency before the first SSR request.
+    // The Cloudflare adapter forwards this include to its server environments too.
+    optimizeDeps: { include: ["zod"] },
+  },
 });
