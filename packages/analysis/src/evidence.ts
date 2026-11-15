@@ -26,20 +26,20 @@ const distinct = (values: string[]) => [...new Set(values)].sort();
 const inference = /성격|내향적|외향적|게으|무능|속마음|의도(?:가|는|를)|동기(?:가|는|를)|성별|인종|종교|장애인|우울증|성적|낙제|발언량|메시지\s*(?:수|개수)|발언\s*횟수|\b(?:lazy|introvert|extrovert|personality|grade|motivation|IQ)\b/i;
 /** `support` adds already verified text (B: A summaries) to the action-word check only, never to the source-copy check. */
 export function checkSummary(summary: string, input: { parts: readonly { text: string }[] }, support: readonly string[] = []) {
-  if (inference.test(summary)) throw new EvidenceError("MODEL_INVALID");
+  if (inference.test(summary)) throw EvidenceError.invalidModel("narrative_prohibited_claim");
   // An external action cannot be manufactured from an unrelated, correctly quoted statement.
   const source = [...input.parts.map(p => p.text), ...support].join("\n");
   for (const action of ["배포", "구현", "수정", "완성", "테스트", "합의", "커밋", "코드", "디자인", "설계", "회의", "제출", "승인"]) {
     const supported = action === "수정" ? /수정|추가|고쳤|반영/.test(source) : source.includes(action);
-    if (summary.includes(action) && !supported) throw new EvidenceError("MODEL_INVALID");
+    if (summary.includes(action) && !supported) throw EvidenceError.invalidModel("narrative_unsupported_action");
   }
   checkSourceCopy(summary, input);
 }
 /** Applies to every generated field that may be persisted, including limitations. */
 export function checkSourceCopy(text: string, input: { parts: readonly { text: string }[] }) {
   for (const p of input.parts) {
-    if (p.text.length >= 12 && text.includes(p.text)) throw new EvidenceError("MODEL_INVALID");
-    for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) throw new EvidenceError("MODEL_INVALID");
+    if (p.text.length >= 12 && text.includes(p.text)) throw EvidenceError.invalidModel("source_copy");
+    for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) throw EvidenceError.invalidModel("source_copy");
   }
 }
 function modelMessages(input: EvidenceInput) {
@@ -119,11 +119,20 @@ export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, a
   try {
     validateEvidenceOutput({ version: input.version, processedPartIds: input.primaryPartIds, events: [], limitations: [] }, input);
     if (input.parts.some(p => p.images.some(i => !p.imageIds.includes(i.id) || i.studentId !== null && !input.students.some(s => s.id === i.studentId)))) throw new Error();
-  } catch { throw new EvidenceError("MODEL_INVALID"); }
+  } catch { throw EvidenceError.invalidModel("evidence_input"); }
   try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); }
   const { generationId, content } = await requestStage(deps, messages, "teamplanet_evidence_v1", evidenceOutputJsonSchema);
+  let raw: unknown;
+  try { raw = JSON.parse(content); } catch { throw EvidenceError.invalidModel("response_json"); }
   let parsed;
-  try { parsed = validateEvidenceOutput(JSON.parse(content), input); } catch { throw new EvidenceError("MODEL_INVALID"); }
+  try { parsed = validateEvidenceOutput(raw, input); } catch (error) {
+    const reasons = { STAGE_COVERAGE_INVALID: "evidence_coverage", STAGE_CITATION_INVALID: "evidence_citation",
+      STAGE_DUPLICATE_REFERENCE: "evidence_reference", STAGE_REFERENCE_INVALID: "evidence_reference",
+      STAGE_ACTOR_UNKNOWN: "evidence_attribution", STAGE_UNSELECTED_COMPETENCY: "evidence_selection",
+      STAGE_MODALITY_INVALID: "evidence_modality", STAGE_IMAGE_ACTOR_INVALID: "evidence_image", STAGE_IMAGE_UNCERTAIN: "evidence_image" } as const;
+    const key = error instanceof Error ? error.message : "";
+    throw EvidenceError.invalidModel(Object.hasOwn(reasons, key) ? reasons[key as keyof typeof reasons] : "evidence_schema");
+  }
   if (parsed.events.length > 512) throw new EvidenceError("CONTEXT_LIMIT");
   const events: NormalizedEvidence[] = [];
   for (const event of parsed.events) {
