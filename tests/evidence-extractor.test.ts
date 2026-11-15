@@ -28,6 +28,31 @@ function fixture(raw: unknown = evidenceOutputFixture) {
   return { deps, calls, chat: (fn: typeof chat) => { chat = fn; }, metadata: (fn: typeof metadata) => { metadata = fn; } };
 }
 const allowed = async () => {};
+test("A classifies rejected contract, citation, coverage, policy and copied text without exposing failed content", async () => {
+  const cases = [
+    ["evidence_schema", (raw: any) => { raw.unexpected = "private-model-body"; }],
+    ["evidence_citation", (raw: any) => { raw.events[0].citations[0].quote = "private-fabricated-quote"; }],
+    ["evidence_coverage", (raw: any) => { raw.processedPartIds = []; }],
+    ["evidence_reference", (raw: any) => { raw.events[0].messageIds = ["message_00000000-0000-4000-8000-000000009999"]; }],
+    ["evidence_selection", (raw: any) => { raw.events[0].behaviorTags = ["decision_execution"]; }],
+    ["evidence_modality", (raw: any) => { raw.events[0].modality = "image"; }],
+    ["narrative_prohibited_claim", (raw: any) => { raw.events[0].summary = "이 학생의 personality를 단정한다."; }],
+    ["narrative_unsupported_action", (raw: any) => { raw.events[0].summary = "실제 배포를 완료했다."; }],
+    ["source_copy", (raw: any) => { raw.limitations = [evidenceInputFixture.parts[0]!.text]; }],
+  ] as const;
+  for (const [reason, mutate] of cases) {
+    const raw = clone(evidenceOutputFixture); mutate(raw); const f = fixture(raw);
+    let caught: unknown; try { await extractEvidence(f.deps, evidenceInputFixture, allowed); } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(EvidenceError);
+    expect(caught).toMatchObject({ code: "MODEL_INVALID", retryable: false, modelValidation: reason });
+    expect(JSON.stringify(caught)).not.toContain("private-");
+    expect(JSON.stringify(caught)).not.toContain(evidenceInputFixture.parts[0]!.text);
+    expect(f.calls).toHaveLength(1);
+  }
+  const f = fixture(); f.chat(() => Response.json({ id: "gen-synthetic", model: modelProfile.model,
+    choices: [{ finish_reason: "stop", message: { content: "private-broken-json{" } }] }));
+  await expect(extractEvidence(f.deps, evidenceInputFixture, allowed)).rejects.toMatchObject({ code: "MODEL_INVALID", modelValidation: "response_json" });
+});
 test("Korean evidence uses pinned ZDR schema request; quotes become hashes and actual receipt is verified", async () => {
   const f = fixture(); let checked = 0;
   const result = await extractEvidence(f.deps, evidenceInputFixture, async () => { checked++; });

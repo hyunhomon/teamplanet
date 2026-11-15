@@ -26,6 +26,8 @@ B에는 해당 사건이 인용한 메시지를 전달한다. C에는 인용되�
 
 `onValidated` hook은 A/B/C의 schema·인용/귀속·복제 방지 검증을 통과한 요약/참조/한계만 저장한다. raw model JSON, 원문, 인용 문자열, 이미지, 키는 호출 원장·Queue·로그에 남기지 않는다. 공급자 receipt가 아직 확인되지 않은 출력은 stage 결과나 교수 후보로 공개하지 않는다.
 
+A의 실패 진단도 원문 없는 `modelValidation`으로 전달한다. `evidence_input`/`evidence_schema`는 입력/모델 계약, `evidence_coverage`·`evidence_citation`·`evidence_reference`·`evidence_attribution`·`evidence_selection`·`evidence_modality`·`evidence_image`는 각각 coverage·인용·참조·작성자 미상·선택 범위·모달리티·이미지 검증이다. 공유 A/B 요약 검사의 `narrative_prohibited_claim`/`narrative_unsupported_action`과 `source_copy`도 고정 코드만 저장한다. 오류 메시지/실패 필드 값을 복사하지 않으며, 진단 코드는 검증을 완화하거나 자동 재전송을 허용하지 않는다.
+
 ## 오류와 명시적 재개
 
 - 실제 402만 `blocked_provider_billing`: 잔액 부족·키 한도·in-flight·미분류를 보존한다. 유효한 Retry-After가 있는 in-flight만 자동 재시도한다.

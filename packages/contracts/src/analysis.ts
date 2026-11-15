@@ -16,7 +16,9 @@ export const analysisStatuses = ["queued", "collecting", "evidence_extraction", 
 export const analysisStatusSchema = z.enum(analysisStatuses);
 // Fixed diagnostics only: never a provider body, source fragment or validator error message.
 export const modelValidationReasonSchema = z.enum(["response_shape", "response_json", "review_input", "review_schema",
-  "review_identity", "review_decision", "review_reference", "review_duplicate_reference", "review_attribution", "review_source_copy", "review_text_limit"]);
+  "review_identity", "review_decision", "review_reference", "review_duplicate_reference", "review_attribution", "review_source_copy", "review_text_limit",
+  "evidence_input", "evidence_schema", "evidence_coverage", "evidence_citation", "evidence_reference", "evidence_attribution", "evidence_selection", "evidence_modality", "evidence_image",
+  "narrative_prohibited_claim", "narrative_unsupported_action", "source_copy"]);
 export type ModelValidationReason = z.infer<typeof modelValidationReasonSchema>;
 export const analysisErrorSchema = z.strictObject({ code: z.enum(["DATA_INVALIDATED", "SOURCE_UNAVAILABLE", "HANDLER_UNREGISTERED", "CONTEXT_LIMIT", "STAGE_INVALID", "PROVIDER_BILLING_BLOCKED", "PROVIDER_AUTH", "RATE_LIMITED", "MODEL_INVALID", "JOB_FAILED", "CONFIG_INVALID", "PROVIDER_POLICY", "PROVIDER_RECEIPT_UNAVAILABLE", "PROVIDER_OUTCOME_UNKNOWN", "UPSTREAM_UNAVAILABLE"]), retryable: z.boolean(),
   modelValidation: modelValidationReasonSchema.optional(),
