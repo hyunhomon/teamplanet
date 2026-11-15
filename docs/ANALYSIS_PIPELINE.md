@@ -31,6 +31,7 @@ B에는 해당 사건이 인용한 메시지를 전달한다. C에는 인용되�
 - 실제 402만 `blocked_provider_billing`: 잔액 부족·키 한도·in-flight·미분류를 보존한다. 유효한 Retry-After가 있는 in-flight만 자동 재시도한다.
 - 401/설정 누락은 `failed_provider_auth`, 403/provider 경로 위반은 `failed_model`의 PROVIDER_POLICY다. 429는 `rate_limited`, 5xx·HTTP200 error·metadata 조회 장애·잘못된 JSON·context는 고정 코드로 구분한다. 공급자 본문과 임의 limit_source를 저장하지 않는다.
 - source 변경/삭제/철회는 유효성/lease fence로 차단한다. Slack 장애는 SOURCE_UNAVAILABLE이며 삭제 증거로 쓰지 않는다.
+- `MODEL_INVALID`의 공유 응답/C 검증 실패에는 선택적 `modelValidation` 고정 진단을 기록한다. `response_shape`/`response_json`은 응답 형식/JSON, `review_input`/`review_schema`는 입력/출력 계약, `review_identity`/`review_decision`은 실행·iteration/수정 한도, `review_reference`/`review_duplicate_reference`/`review_attribution`은 참조·중복·귀속, `review_source_copy`/`review_text_limit`은 원문 복제/서술 길이 위반이다. 기존 오류 코드·재시도 정책은 그대로이며 이 값은 소유 교수의 실행 조회에도 전달된다. 원시 응답·실패한 값·Zod 메시지는 저장하지 않는다. 과거 오류나 아직 진단하지 않은 A/B 검증에는 이 필드가 없으며 원인을 추측해 채우지 않는다. 실패한 유료 호출을 진단 목적으로 자동 재전송하지 않는다.
 - 자동 재시도는 기존 generation당 5회다. `GET /analysis-runs/:id`는 실제 Queue가 dead인 경우 자동 재시도 예정이라고 표시하지 않는다.
 - `/resume`은 키/잔액/공급자 정책 문제를 해결한 뒤 소유 교수가 명시 요청할 수 있다. receipt 대기는 저장한 정규화 결과를 재사용한다. generation 복구는 기존 3회 한도이며 취소/자료 무효·결과 불명·invalid output/context는 일반 resume로 우회하지 않는다. 새 run은 기존 버전을 덮어쓰지 않는다.
 

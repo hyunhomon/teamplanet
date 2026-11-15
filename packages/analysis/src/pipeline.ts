@@ -1,6 +1,6 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { analysisArtifactsSchema, analysisSnapshotSchema, assessmentInputSchema, assessmentStageDataSchema, chunkPlanSchema,
-  evidenceStageDataSchema, manifestHeaderSchema, pipelineMetadataSchema, reviewInputSchema, reviewStageDataSchema,
+  evidenceStageDataSchema, manifestHeaderSchema, modelValidationReasonSchema, pipelineMetadataSchema, reviewInputSchema, reviewStageDataSchema,
   stageReceiptSchema, jobKey, assertAnalysisTransition, type AnalysisArtifacts, type AnalysisSnapshot, type Part, type QueueJob, type StageName } from "@teamplanet/contracts";
 import { runValidityGuard, invalidateTeam, SourceUnavailable, type ImageDeps } from "@teamplanet/collection";
 import { modelProfile, type ModelRole } from "@teamplanet/ai-core";
@@ -120,7 +120,9 @@ async function recordFailure(deps: PipelineDeps, job: StageJob, context: JobCont
   const status = code === "DATA_INVALIDATED" ? "failed_data" : code === "PROVIDER_BILLING_BLOCKED" ? "blocked_provider_billing"
     : ["PROVIDER_AUTH", "CONFIG_INVALID"].includes(code) ? "failed_provider_auth" : code === "RATE_LIMITED" ? "rate_limited" : "failed_model";
   const dataError = code === "DATA_INVALIDATED";
+  const validation = modelValidationReasonSchema.safeParse(error instanceof EvidenceError && code === "MODEL_INVALID" ? error.modelValidation : undefined);
   const failure = { stage: job.stage, chunkId: job.chunkId, code: code === "HANDLER_FAILURE" || code === "DATA_INVALID" || code === "REFERENCE_NOT_FOUND" ? "JOB_FAILED" : code,
+    ...(validation.success ? { modelValidation: validation.data } : {}),
     retryable, ...(delay !== undefined ? { retryAfterSeconds: delay } : {}), ...(billing ? { billing } : {}) };
   await context.heartbeat();
   await context.commit(`failure${queue.generation}_${queue.attempts}`, code, [
