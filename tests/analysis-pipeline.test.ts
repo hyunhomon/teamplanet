@@ -19,13 +19,14 @@ let send: (url: string, init: RequestInit) => Promise<Response>;
 let key: string | undefined;
 let quiet: boolean;
 let canonicalReceipt: boolean;
+let reviewFault: boolean;
 let cancelAt: string | null, inputs: { name: string; input: any; wire: string }[];
 const configured = { evidence: "qwen/qwen3.5-9b", assessor: "qwen/qwen3.5-9b", reviewer: "qwen/qwen3.5-9b" };
 const roles = new Map<string, string>();
 beforeEach(async () => {
   f = await collectionFixture(); clock = f.now(); professor = f.professor; work = []; dead = []; paid = []; receipts = [];
   correction = false; quiet = false; receiptOutage = 0; failStage = null; status = 503; limitSource = "openrouter_credits"; networkFailure = false; revokeAt = null; cancelAt = null; inputs = []; key = "synthetic-key"; roles.clear();
-  canonicalReceipt = false;
+  canonicalReceipt = false; reviewFault = false;
   f.sqlite.run("INSERT INTO course_rubric_settings VALUES (?, 'communication-v1', '[\"clarity\"]', 1)", [f.course.id]);
   f.sqlite.run("INSERT INTO collection_coverage (request_id,team_id,from_ms,to_ms,status,started_at,updated_at) VALUES (?,?,?,?,'complete',?,?)", [crypto.randomUUID(), f.teamId, f.start, f.start + 200000, clock, clock]);
   send = async () => Response.json({ ok: true, messages: [{ ts: f.slackTs, user: f.userId, text: f.text }], has_more: false });
@@ -70,6 +71,7 @@ const fetcher = async (url: string, init: RequestInit) => {
     output = { version: input.version, runId: input.runId, iteration: input.iteration, decision: needsCorrection ? "request_correction" : "accept",
       issues: needsCorrection ? [{ id: "issue_context", code: "context_missing", studentId: input.students[0].id, competency: "clarity", evidenceIds: [input.evidence[0].id],
         messageIds: [input.parts[0].messageId], instruction: "관찰 범위의 한계를 명시하세요." }] : [], limitations: [], requiresHumanReview: false };
+    if (reviewFault) (output as any).unexpected = input.parts[0].text;
   } else {
     const assessment = { version: input.version, runId: input.runId,
       overviews: input.students.map((s: any) => ({ studentId: s.id, summary: "관찰된 설명 사례를 요약했다.", limitations: [], requiresHumanReview: false })),
@@ -97,6 +99,25 @@ async function drain(until?: () => boolean) {
   throw Error("synthetic queue did not settle");
 }
 const count = (table: string) => (f.sqlite.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+test("invalid real-stage C output stores only a fixed reason, exposes it to its owner, and cannot be resumed or promoted", async () => {
+  reviewFault = true;
+  const run = await create(); await drain();
+  const state = analysisRunResponseSchema.parse(await (await call(`/analysis-runs/${run.id}`)).json());
+  expect(state).toMatchObject({ status: "failed_model", errors: [{ code: "MODEL_INVALID", retryable: false, modelValidation: "review_schema" }] });
+  expect(f.sqlite.query("SELECT status, output_json FROM analysis_calls WHERE run_id=? AND stage='review'").get(run.id))
+    .toMatchObject({ status: "failed", output_json: null });
+  expect((await call(`/analysis-runs/${run.id}/resume`, {})).status).toBe(409);
+  expect((await call(`/analysis-runs/${run.id}/artifacts`)).status).toBe(409);
+  await drain(); expect(paid).toHaveLength(3); expect(count("analysis_outputs")).toBe(0);
+  const persisted = JSON.stringify([f.sqlite.query("SELECT * FROM analysis_calls").all(), f.sqlite.query("SELECT * FROM analysis_runs").all(),
+    f.sqlite.query("SELECT * FROM queue_jobs").all(), f.sqlite.query("SELECT * FROM job_checkpoints").all()]);
+  expect(persisted).toContain("review_schema"); expect(persisted).not.toContain(f.text); expect(persisted).not.toContain("synthetic-key");
+  // Old failures remain readable; they do not acquire a fabricated explanation.
+  f.sqlite.run("UPDATE analysis_runs SET stage_metadata_json=? WHERE id=?", [JSON.stringify({ version: "pipeline-v1", error: { code: "MODEL_INVALID", retryable: false, stage: "review", chunkId: "run_0" } }), run.id]);
+  const old = analysisRunResponseSchema.parse(await (await call(`/analysis-runs/${run.id}`)).json());
+  expect(old.errors[0]!.modelValidation).toBeUndefined();
+});
 
 test("actual prepare/outbox/Consumer A-B-C reaches a source-verified professor candidate once", async () => {
   const run = await create(); await drain();

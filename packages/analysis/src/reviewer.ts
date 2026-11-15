@@ -1,5 +1,5 @@
 import { assessmentInputSchema, correctionOutputSchema, reviewInputSchema, reviewOutputJsonSchema,
-  validateAssessmentOutput, validateCorrectionOutput, validateReviewOutput } from "@teamplanet/contracts";
+  validateAssessmentOutput, validateCorrectionOutput, validateReviewOutput, type ModelValidationReason } from "@teamplanet/contracts";
 import { sha256Hex } from "@teamplanet/collection";
 import { modelProfile } from "@teamplanet/ai-core";
 import { EvidenceError, requestStage, verifyEvidenceGeneration, type EvidenceModelDeps, type EvidenceReceipt } from "./evidence";
@@ -9,7 +9,7 @@ export type ReviewInput = ReturnType<typeof reviewInputSchema.parse>;
 export type ReviewOutput = ReturnType<typeof validateReviewOutput>;
 export type ReviewResult = { runId: string; iteration: 0 | 1; review: ReviewOutput; receipt: EvidenceReceipt };
 const distinct = (values: string[]) => [...new Set(values)].sort();
-const invalid = () => { throw new EvidenceError("MODEL_INVALID"); };
+const invalid = (reason: ModelValidationReason = "review_input"): never => { throw EvidenceError.invalidModel(reason); };
 const assessmentInput = ({ assessment, iteration, ...rest }: ReviewInput) => assessmentInputSchema.parse(rest);
 function candidateFor(input: ReviewInput, review: ReviewOutput) {
   const candidate = structuredClone(input.assessment);
@@ -57,20 +57,27 @@ async function checkSources(input: ReviewInput) {
 /** C's references must support THIS student/dimension, not merely be IDs found somewhere in the input. */
 function checkedReview(raw: unknown, input: ReviewInput): ReviewOutput {
   let out: ReviewOutput;
-  try { out = validateReviewOutput(raw, input); } catch { return invalid(); }
+  try { out = validateReviewOutput(raw, input); } catch (error) {
+    // Exact allowlist mapping; do not persist arbitrary Error/Zod messages or offending values.
+    const reasons = { STAGE_REVIEW_INVALID: "review_identity", STAGE_CORRECTION_LIMIT: "review_decision",
+      STAGE_REVIEW_REFERENCE_INVALID: "review_reference" } as const;
+    const key = error instanceof Error ? error.message : "";
+    return invalid(Object.hasOwn(reasons, key) ? reasons[key as keyof typeof reasons] : "review_schema");
+  }
   for (const issue of out.issues) {
-    if (!issue.evidenceIds.length && !issue.messageIds.length || new Set(issue.evidenceIds).size !== issue.evidenceIds.length
-      || new Set(issue.messageIds).size !== issue.messageIds.length) invalid();
+    if (!issue.evidenceIds.length && !issue.messageIds.length) invalid("review_reference");
+    if (new Set(issue.evidenceIds).size !== issue.evidenceIds.length
+      || new Set(issue.messageIds).size !== issue.messageIds.length) invalid("review_duplicate_reference");
     const evidence = issue.evidenceIds.map(id => input.evidence.find(e => e.id === id)!);
-    if (evidence.some(e => !e.actorIds.includes(issue.studentId) || !e.behaviorTags.includes(issue.competency))) invalid();
-    if (issue.messageIds.some(id => !evidence.some(e => e.messageIds.includes(id)) && !input.parts.some(p => p.messageId === id && p.studentId === issue.studentId))) invalid();
+    if (evidence.some(e => !e.actorIds.includes(issue.studentId) || !e.behaviorTags.includes(issue.competency))) invalid("review_attribution");
+    if (issue.messageIds.some(id => !evidence.some(e => e.messageIds.includes(id)) && !input.parts.some(p => p.messageId === id && p.studentId === issue.studentId))) invalid("review_attribution");
   }
   // A review may describe an error, but may not persist a raw quotation as its correction.
   for (const text of [...out.limitations, ...out.issues.map(i => i.instruction)]) {
-    if (text.length > 2000) invalid();
+    if (text.length > 2000) invalid("review_text_limit");
     for (const p of input.parts) {
-      if (p.text.length >= 12 && text.includes(p.text)) invalid();
-      for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) invalid();
+      if (p.text.length >= 12 && text.includes(p.text)) invalid("review_source_copy");
+      for (let i = 0; i + 32 <= text.length; i++) if (p.text.includes(text.slice(i, i + 32))) invalid("review_source_copy");
     }
   }
   out.limitations = distinct([...out.limitations, ...input.limitations, ...input.evidence.flatMap(e => e.limitations),
@@ -85,7 +92,7 @@ export async function reviewAssessment(deps: EvidenceModelDeps, value: unknown, 
   if (!deps.apiKey?.trim() || deps.modelId !== modelProfile.model) throw new EvidenceError("CONFIG_INVALID");
   let input: ReviewInput;
   try { input = reviewInputSchema.parse(value); validateAssessmentOutput(input.assessment, assessmentInput(input)); }
-  catch { throw new EvidenceError("MODEL_INVALID"); }
+  catch { return invalid(); }
   if (input.iteration === 0 && input.correction !== null || input.iteration === 1 && input.correction === null) invalid();
   if (input.correction) checkedReview({ version: input.version, runId: input.runId, iteration: 0, decision: "request_correction",
     issues: input.correction.issues, limitations: [], requiresHumanReview: true }, { ...input, iteration: 0, correction: null });
@@ -97,7 +104,7 @@ export async function reviewAssessment(deps: EvidenceModelDeps, value: unknown, 
   const current = async () => { try { await assertCurrent(); } catch { throw new EvidenceError("DATA_INVALIDATED"); } };
   await current();
   const { generationId, content } = await requestStage(deps, [{ role: "system", content: reviewerSystemPrompt }, { role: "user", content: data }], "teamplanet_review_v1", reviewOutputJsonSchema);
-  let raw: unknown; try { raw = JSON.parse(content); } catch { return invalid(); }
+  let raw: unknown; try { raw = JSON.parse(content); } catch { return invalid("response_json"); }
   const review = checkedReview(raw, input);
   if (deps.onValidated) { await current(); await deps.onValidated({ runId: input.runId, iteration: input.iteration, review }, generationId); }
   const receipt = await verifyEvidenceGeneration(deps, generationId, deps.modelId);

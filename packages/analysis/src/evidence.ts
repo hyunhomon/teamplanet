@@ -1,5 +1,5 @@
 import { analysisSnapshotSchema, evidenceInputSchema, evidenceOutputJsonSchema, normalizedEvidenceSchema, validateEvidenceOutput,
-  type AnalysisSnapshot, type ChunkPlan, type EvidenceInput, type NormalizedEvidence } from "@teamplanet/contracts";
+  type AnalysisSnapshot, type ChunkPlan, type EvidenceInput, type NormalizedEvidence, type ModelValidationReason } from "@teamplanet/contracts";
 import { imageFormat, IMAGE_LIMITS, sha256Hex, type ImageDeps } from "@teamplanet/collection";
 import { modelProfile, requestOpenRouter, type BillingBlock } from "@teamplanet/ai-core";
 import { analysisId } from "./planner";
@@ -9,7 +9,10 @@ export { evidencePromptVersion, evidenceSystemPrompt } from "./evidence-prompt";
 export class EvidenceError extends Error {
   constructor(readonly code: "CONFIG_INVALID" | "CONTEXT_LIMIT" | "MODEL_INVALID" | "PROVIDER_AUTH" | "PROVIDER_POLICY" | "PROVIDER_RECEIPT_UNAVAILABLE" | "RATE_LIMITED" | "UPSTREAM_UNAVAILABLE" | "PROVIDER_BILLING_BLOCKED" | "DATA_INVALIDATED",
     readonly retryable = false, readonly billing?: BillingBlock, readonly generationId?: string, readonly retryAfterSeconds?: number,
-    readonly outcomeUnknown = false) { super(code); }
+    readonly outcomeUnknown = false, readonly modelValidation?: ModelValidationReason) { super(code); }
+  static invalidModel(reason: ModelValidationReason) {
+    return new EvidenceError("MODEL_INVALID", false, undefined, undefined, undefined, false, reason);
+  }
 }
 export type EvidenceReceipt = { generationId: string; model: string; resolvedModel?: typeof modelProfile.canonicalModel; provider: "DeepInfra"; requestedProvider: "deepinfra/bf16"; promptVersion: typeof evidencePromptVersion };
 export type EvidenceChunkResult = { runId: string; chunkId: string; processedPartIds: string[]; events: NormalizedEvidence[]; limitations: string[];
@@ -98,7 +101,7 @@ export async function requestStage(deps: EvidenceModelDeps, messages: Array<Reco
     throw new EvidenceError("UPSTREAM_UNAVAILABLE", true, undefined, undefined, undefined, true);
   }
   if (!response.ok) {
-    if (response.error.code === "OPENROUTER_INVALID_RESPONSE") throw new EvidenceError("MODEL_INVALID");
+    if (response.error.code === "OPENROUTER_INVALID_RESPONSE") throw EvidenceError.invalidModel("response_shape");
     if ("kind" in response.error) throw new EvidenceError("PROVIDER_BILLING_BLOCKED", response.error.retryable, response.error, undefined, response.error.retryAfterSeconds);
     const status = response.error.providerStatus;
     throw new EvidenceError(status === 401 ? "PROVIDER_AUTH" : status === 403 ? "PROVIDER_POLICY" : status === 429 ? "RATE_LIMITED" : "UPSTREAM_UNAVAILABLE", status === 429 || status >= 500 || status === 200, undefined, undefined, retryAfter);
@@ -106,7 +109,7 @@ export async function requestStage(deps: EvidenceModelDeps, messages: Array<Reco
   const data = response.data as any, choice = data?.choices?.[0];
   if (!matchesModel(data?.model, deps.modelId) || !/^gen-[A-Za-z0-9_-]{1,150}$/.test(data?.id ?? "")) throw new EvidenceError("PROVIDER_POLICY");
   if (choice?.finish_reason === "length") throw new EvidenceError("CONTEXT_LIMIT");
-  if (data.choices?.length !== 1 || choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string" || choice.message.content.length > 1048576) throw new EvidenceError("MODEL_INVALID");
+  if (data.choices?.length !== 1 || choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string" || choice.message.content.length > 1048576) throw EvidenceError.invalidModel("response_shape");
   return { generationId: data.id as string, content: choice.message.content as string };
 }
 /** For already-authorized memory input. Production orchestration should use extractRunEvidence below. No internal paid retry. */

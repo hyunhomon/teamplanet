@@ -14,7 +14,12 @@ export const createAnalysisRunSchema = z.strictObject({ teamId: teamIdSchema, fr
 export const analysisStatuses = ["queued", "collecting", "evidence_extraction", "assessment", "review", "awaiting_professor", "finalized",
   "blocked_provider_billing", "failed_provider_auth", "rate_limited", "failed_model", "failed_data", "cancelled"] as const;
 export const analysisStatusSchema = z.enum(analysisStatuses);
+// Fixed diagnostics only: never a provider body, source fragment or validator error message.
+export const modelValidationReasonSchema = z.enum(["response_shape", "response_json", "review_input", "review_schema",
+  "review_identity", "review_decision", "review_reference", "review_duplicate_reference", "review_attribution", "review_source_copy", "review_text_limit"]);
+export type ModelValidationReason = z.infer<typeof modelValidationReasonSchema>;
 export const analysisErrorSchema = z.strictObject({ code: z.enum(["DATA_INVALIDATED", "SOURCE_UNAVAILABLE", "HANDLER_UNREGISTERED", "CONTEXT_LIMIT", "STAGE_INVALID", "PROVIDER_BILLING_BLOCKED", "PROVIDER_AUTH", "RATE_LIMITED", "MODEL_INVALID", "JOB_FAILED", "CONFIG_INVALID", "PROVIDER_POLICY", "PROVIDER_RECEIPT_UNAVAILABLE", "PROVIDER_OUTCOME_UNKNOWN", "UPSTREAM_UNAVAILABLE"]), retryable: z.boolean(),
+  modelValidation: modelValidationReasonSchema.optional(),
   retryAfterSeconds: z.number().nonnegative().optional(), billing: z.strictObject({ providerStatus: z.literal(402),
     kind: z.enum(["insufficient_credits", "key_limit_exhausted", "in_flight_budget", "unspecified_provider_billing"]) }).optional() });
 export const analysisSnapshotSchema = z.strictObject({ contractVersion: z.literal(analysisContractVersion), rubric: rubricSelectionSchema,
