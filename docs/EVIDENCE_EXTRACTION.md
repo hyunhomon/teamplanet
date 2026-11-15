@@ -4,6 +4,8 @@
 
 ## 전송과 공급자 확인
 
+A가 낸 인용의 숫자 좌표가 원문과 맞지 않으면, 같은 part의 quote가 **문자열 그대로 정확히 한 번** 나타나는 경우에만 서버가 절대 UTF16 좌표를 계산하고 기존 strict validator로 다시 검증한다. 정확한 명시적 좌표는 중복 문자열이어도 보존한다. 없는/변형된 인용·모호한 중복·가짜 part는 거부하며 다른 part 검색이나 fuzzy match는 하지 않는다. surrogate pair 중간 경계도 거부한다. 교정된 사건에는 `citation_offsets_resolved_from_unique_quote`와 사람 검토 필요를 남긴다. 저장은 실제 범위/해시뿐이고 원문·원래 model completion은 보관하지 않는다. 이 계산은 모델의 의미 해석이나 작성자/메시지 귀속을 승인하는 과정이 아니며 기존 전체 coverage·동의·현재 source·lease 검사를 유지한다.
+
 기존 `communication-prompts-v1` A 역할을 `packages/analysis/src/evidence-prompt.ts`에 구현한다. `qwen-pilot-v1`의 evidence 모델과 snapshot이 정확히 같아야 한다. DeepInfra BF16 only·ZDR·학습 미사용·reasoning off·fallback false를 기존 OpenRouter helper로 강제하며 구조화 JSON schema를 지정한다. 앱 비용 상한·자동 저가 모델 폴백을 추가하지 않는다.
 
 실제 model은 응답과 대조하고 generation의 **metadata만** 조회해 id/model/provider_name=DeepInfra를 확인한다. 요청 provider를 실제 provider로 가장하지 않는다. receipt는 generationId/model/provider/requestedProvider/promptVersion뿐이며 prompt/output 내용 조회 API는 사용하지 않는다. [Chat 구조화 출력](https://openrouter.ai/docs/guides/features/structured-outputs)과 [generation metadata API](https://openrouter.ai/docs/api/api-reference/generations/get-request-&-usage-metadata-for-a-generation)를 따른다. metadata 지연/권한 실패면 `PROVIDER_RECEIPT_UNAVAILABLE`과 generationId를 반환하는 오류이며 완료가 아니다. adapter는 유료 호출을 자동 재시도하지 않는다. #20은 metadata만 별도로 재확인하고 중복 유료 전송을 피하는 checkpoint를 연결해야 한다.

@@ -28,6 +28,44 @@ function fixture(raw: unknown = evidenceOutputFixture) {
   return { deps, calls, chat: (fn: typeof chat) => { chat = fn; }, metadata: (fn: typeof metadata) => { metadata = fn; } };
 }
 const allowed = async () => {};
+test("A grounds a model's mistaken offset in one exact same-part quote, including nonzero UTF16/emoji coordinates", async () => {
+  const input = clone(evidenceInputFixture), raw = clone(evidenceOutputFixture), part = input.parts[0]!;
+  const quote = part.text;
+  part.start = 100; part.text = `😀${quote}`; part.end = part.start + part.text.length;
+  part.utf8Bytes = new TextEncoder().encode(part.text).length;
+  raw.events[0]!.citations = [{ partId: part.id, start: 101, end: 101 + quote.length, quote }];
+  let saved: unknown;
+  const mock = fixture(raw);
+  const result = await extractEvidence({ ...mock.deps, onValidated: async value => { saved = value; } }, input, allowed);
+  expect(result.events[0]!.citations[0]).toMatchObject({ start: 102, end: 102 + quote.length });
+  expect(result.events[0]!.limitations).toContain("citation_offsets_resolved_from_unique_quote");
+  expect(result.events[0]!.requiresHumanReview).toBe(true);
+  expect(JSON.stringify(saved)).not.toContain(quote); expect(mock.calls).toHaveLength(2);
+  expect(raw.events[0]!.citations[0]!.start).toBe(101); // model object is not mutated
+});
+
+test("offset grounding refuses ambiguous, fabricated, wrong-part and half-surrogate quotes; explicit valid repeats stay valid", async () => {
+  const input = clone(evidenceInputFixture), raw = clone(evidenceOutputFixture), part = input.parts[0]!;
+  const quote = part.text;
+  part.text = `${quote}\n\n${quote}`; part.end = part.text.length; part.utf8Bytes = new TextEncoder().encode(part.text).length;
+  raw.events[0]!.citations = [{ partId: part.id, start: 0, end: 1, quote }];
+  await expect(extractEvidence(fixture(raw).deps, input, allowed)).rejects.toMatchObject({ code: "MODEL_INVALID", modelValidation: "evidence_citation" });
+  const exact = clone(raw); exact.events[0]!.citations[0]!.start = quote.length + 2; exact.events[0]!.citations[0]!.end = part.end;
+  const result = await extractEvidence(fixture(exact).deps, input, allowed);
+  expect(result.events[0]!.citations[0]!.start).toBe(quote.length + 2);
+  expect(result.events[0]!.limitations).not.toContain("citation_offsets_resolved_from_unique_quote");
+  for (const citation of [{ partId: part.id, start: 0, end: 1, quote: "unseen invented quotation" },
+    { partId: "unknown-part", start: 0, end: 1, quote }]) {
+    const bad = clone(raw); bad.events[0]!.citations = [citation];
+    await expect(extractEvidence(fixture(bad).deps, input, allowed)).rejects.toMatchObject({ code: "MODEL_INVALID", modelValidation: "evidence_citation" });
+  }
+  part.text = `😀${quote}`; part.end = part.text.length; part.utf8Bytes = new TextEncoder().encode(part.text).length;
+  raw.events[0]!.citations = [{ partId: part.id, start: 0, end: 1, quote: "\uD83D" }];
+  await expect(extractEvidence(fixture(raw).deps, input, allowed)).rejects.toMatchObject({ code: "MODEL_INVALID", modelValidation: "evidence_citation" });
+  const oversized = clone(evidenceOutputFixture);
+  oversized.events = Array.from({ length: 513 }, () => clone(oversized.events[0]!));
+  await expect(extractEvidence(fixture(oversized).deps, evidenceInputFixture, allowed)).rejects.toThrow("CONTEXT_LIMIT");
+});
 test("A classifies rejected contract, citation, coverage, policy and copied text without exposing failed content", async () => {
   const cases = [
     ["evidence_schema", (raw: any) => { raw.unexpected = "private-model-body"; }],
