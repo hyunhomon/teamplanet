@@ -21,13 +21,14 @@ let quiet: boolean;
 let canonicalReceipt: boolean;
 let reviewFault: boolean;
 let evidenceFault: boolean;
+let offsetFault: boolean;
 let cancelAt: string | null, inputs: { name: string; input: any; wire: string }[];
 const configured = { evidence: "qwen/qwen3.5-9b", assessor: "qwen/qwen3.5-9b", reviewer: "qwen/qwen3.5-9b" };
 const roles = new Map<string, string>();
 beforeEach(async () => {
   f = await collectionFixture(); clock = f.now(); professor = f.professor; work = []; dead = []; paid = []; receipts = [];
   correction = false; quiet = false; receiptOutage = 0; failStage = null; status = 503; limitSource = "openrouter_credits"; networkFailure = false; revokeAt = null; cancelAt = null; inputs = []; key = "synthetic-key"; roles.clear();
-  canonicalReceipt = false; reviewFault = false; evidenceFault = false;
+  canonicalReceipt = false; reviewFault = false; evidenceFault = false; offsetFault = false;
   f.sqlite.run("INSERT INTO course_rubric_settings VALUES (?, 'communication-v1', '[\"clarity\"]', 1)", [f.course.id]);
   f.sqlite.run("INSERT INTO collection_coverage (request_id,team_id,from_ms,to_ms,status,started_at,updated_at) VALUES (?,?,?,?,'complete',?,?)", [crypto.randomUUID(), f.teamId, f.start, f.start + 200000, clock, clock]);
   send = async () => Response.json({ ok: true, messages: [{ ts: f.slackTs, user: f.userId, text: f.text }], has_more: false });
@@ -67,7 +68,8 @@ const fetcher = async (url: string, init: RequestInit) => {
       citations: [{ partId: p.id, start: p.start, end: p.start + quote.length, quote }], imageCitations: [], limitations: [], requiresHumanReview: true }] };
     if (image) Object.assign((output as any).events[0], { modality: "mixed", imageCitations: [{ partId: image.id, imageId: image.images[0].id, observation: "합성 도식의 구성 요소가 보인다.", actorId: image.images[0].studentId }] });
     if (quiet) (output as any).events = [];
-    if (evidenceFault) (output as any).events[0].citations[0].end += 1;
+    if (evidenceFault) (output as any).events[0].citations[0].quote = "synthetic quotation absent from the source";
+    if (offsetFault) (output as any).events[0].citations[0].end += 1;
   } else if (name === "teamplanet_review_v1") {
     const needsCorrection = correction && input.iteration === 0;
     output = { version: input.version, runId: input.runId, iteration: input.iteration, decision: needsCorrection ? "request_correction" : "accept",
@@ -101,6 +103,20 @@ async function drain(until?: () => boolean) {
   throw Error("synthetic queue did not settle");
 }
 const count = (table: string) => (f.sqlite.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+test("server-grounded unique quotation survives Queue, strict C source verification and artifact revalidation without persisting text", async () => {
+  offsetFault = true;
+  const run = await create(); await drain();
+  const response = await call(`/analysis-runs/${run.id}/artifacts`); expect(response.status).toBe(200);
+  const artifacts = analysisArtifactsSchema.parse(await response.json());
+  expect(artifacts.evidence[0]!.citations[0]).toMatchObject({ start: 0, end: f.text.length });
+  expect(artifacts.evidence[0]!.limitations).toContain("citation_offsets_resolved_from_unique_quote");
+  expect(artifacts.finalReview.limitations).toContain("citation_offsets_resolved_from_unique_quote");
+  expect(artifacts.candidate.assessments[0]!.requiresHumanReview).toBe(true);
+  expect(paid).toHaveLength(3);
+  const saved = JSON.stringify([f.sqlite.query("SELECT * FROM analysis_calls").all(), f.sqlite.query("SELECT * FROM analysis_stage_results").all(), f.sqlite.query("SELECT * FROM analysis_outputs").all()]);
+  expect(saved).not.toContain(f.text); expect(saved).not.toContain("synthetic-key");
+});
 
 test("A citation failure persists its fixed diagnosis and never stores completion or dispatches B/C", async () => {
   evidenceFault = true;

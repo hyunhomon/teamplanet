@@ -1,4 +1,4 @@
-import { analysisSnapshotSchema, evidenceInputSchema, evidenceOutputJsonSchema, normalizedEvidenceSchema, validateEvidenceOutput,
+import { analysisSnapshotSchema, evidenceInputSchema, evidenceModelOutputSchema, evidenceOutputJsonSchema, normalizedEvidenceSchema, validateEvidenceOutput,
   type AnalysisSnapshot, type ChunkPlan, type EvidenceInput, type NormalizedEvidence, type ModelValidationReason } from "@teamplanet/contracts";
 import { imageFormat, IMAGE_LIMITS, sha256Hex, type ImageDeps } from "@teamplanet/collection";
 import { modelProfile, requestOpenRouter, type BillingBlock } from "@teamplanet/ai-core";
@@ -112,6 +112,28 @@ export async function requestStage(deps: EvidenceModelDeps, messages: Array<Reco
   if (data.choices?.length !== 1 || choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string" || choice.message.content.length > 1048576) throw EvidenceError.invalidModel("response_shape");
   return { generationId: data.id as string, content: choice.message.content as string };
 }
+/** A model need not count UTF16 characters: ground a mistaken range in ONE exact match in its named part. */
+function groundCitationOffsets(raw: unknown, input: EvidenceInput) {
+  const output = evidenceModelOutputSchema.parse(raw), corrected = new Set<number>();
+  if (output.events.length > 512) throw new EvidenceError("CONTEXT_LIMIT");
+  const parts = new Map(input.parts.map(p => [p.id, p]));
+  const splitsPair = (text: string, at: number) => at > 0 && at < text.length
+    && /[\uD800-\uDBFF]/.test(text[at - 1]!) && /[\uDC00-\uDFFF]/.test(text[at]!);
+  for (const [index, event] of output.events.entries()) for (const citation of event.citations) {
+    const part = parts.get(citation.partId);
+    if (!part) throw new Error("STAGE_CITATION_INVALID");
+    const local = citation.start - part.start, end = citation.end - part.start;
+    if (local >= 0 && end <= part.text.length && local < end && !splitsPair(part.text, local) && !splitsPair(part.text, end)
+      && part.text.slice(local, end) === citation.quote) continue;
+    const at = part.text.indexOf(citation.quote);
+    if (at < 0 || part.text.indexOf(citation.quote, at + 1) !== -1 || splitsPair(part.text, at) || splitsPair(part.text, at + citation.quote.length)) {
+      throw new Error("STAGE_CITATION_INVALID");
+    }
+    citation.start = part.start + at; citation.end = citation.start + citation.quote.length;
+    corrected.add(index);
+  }
+  return { output: validateEvidenceOutput(output, input), corrected };
+}
 /** For already-authorized memory input. Production orchestration should use extractRunEvidence below. No internal paid retry. */
 export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, assertCurrent: () => Promise<void>): Promise<EvidenceChunkResult> {
   if (typeof deps.apiKey !== "string" || !deps.apiKey.trim() || deps.modelId !== modelProfile.model) throw new EvidenceError("CONFIG_INVALID");
@@ -124,8 +146,9 @@ export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, a
   const { generationId, content } = await requestStage(deps, messages, "teamplanet_evidence_v1", evidenceOutputJsonSchema);
   let raw: unknown;
   try { raw = JSON.parse(content); } catch { throw EvidenceError.invalidModel("response_json"); }
-  let parsed;
-  try { parsed = validateEvidenceOutput(raw, input); } catch (error) {
+  let parsed, corrected: Set<number>;
+  try { ({ output: parsed, corrected } = groundCitationOffsets(raw, input)); } catch (error) {
+    if (error instanceof EvidenceError) throw error;
     const reasons = { STAGE_COVERAGE_INVALID: "evidence_coverage", STAGE_CITATION_INVALID: "evidence_citation",
       STAGE_DUPLICATE_REFERENCE: "evidence_reference", STAGE_REFERENCE_INVALID: "evidence_reference",
       STAGE_ACTOR_UNKNOWN: "evidence_attribution", STAGE_UNSELECTED_COMPETENCY: "evidence_selection",
@@ -133,16 +156,16 @@ export async function extractEvidence(deps: EvidenceModelDeps, value: unknown, a
     const key = error instanceof Error ? error.message : "";
     throw EvidenceError.invalidModel(Object.hasOwn(reasons, key) ? reasons[key as keyof typeof reasons] : "evidence_schema");
   }
-  if (parsed.events.length > 512) throw new EvidenceError("CONTEXT_LIMIT");
   const events: NormalizedEvidence[] = [];
-  for (const event of parsed.events) {
+  for (const [index, event] of parsed.events.entries()) {
     checkSummary(event.summary, input);
     const citations = await Promise.all(event.citations.map(async c => ({ messageId: input.parts.find(p => p.id === c.partId)!.messageId, start: c.start, end: c.end, hash: await sha256Hex(c.quote) })));
     const key = JSON.stringify([distinct(event.messageIds), distinct(event.actorIds), distinct(event.behaviorTags), event.modality]);
     events.push(normalizedEvidenceSchema.parse({ id: await analysisId("evidence", `${input.runId}:${key}`), messageIds: distinct(event.messageIds), actorIds: distinct(event.actorIds), summary: event.summary,
       behaviorTags: distinct(event.behaviorTags), modality: event.modality, citations, imageIds: distinct(event.imageCitations.map(c => c.imageId)),
       limitations: distinct([...input.limitations, ...parsed.limitations, ...event.limitations, ...input.parts.filter(p => event.messageIds.includes(p.messageId)).flatMap(p => p.limitations),
-        "model_interpretation_requires_independent_review", ...(event.imageCitations.length ? ["image_interpretation_requires_review"] : [])]), requiresHumanReview: true }));
+        "model_interpretation_requires_independent_review", ...(corrected.has(index) ? ["citation_offsets_resolved_from_unique_quote"] : []),
+        ...(event.imageCitations.length ? ["image_interpretation_requires_review"] : [])]), requiresHumanReview: true }));
   }
   const missingImageIds = distinct(input.parts.flatMap(p => p.imageIds.filter(id => !p.images.some(image => image.id === id))));
   for (const text of [...parsed.limitations, ...parsed.events.flatMap(event => event.limitations)]) checkSourceCopy(text, input);
